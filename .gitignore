@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+*.log
+debug-*.log
+.cursor/
+coverage/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.tsbuildinfo

@@ -1,0 +1,412 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  password        String
+  name            String
+  role            String    @default("vet")
+  phone           String?
+  clinic          String?
+  address         String?
+  license         String?
+  photo           String?
+  photoAssetId    String?
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  patients              Patient[]                @relation("VetPatients")
+  ownedPatients         Patient[]                @relation("OwnerPatients")
+  appointments          Appointment[]
+  clinicConfig          ClinicConfig?
+  patientAccesses       PatientAccess[]
+  linkRequestsMade      LinkRequest[]            @relation("LinkRequester")
+  linkRequestsDecided   LinkRequest[]            @relation("LinkDecider")
+  refreshTokens         RefreshToken[]
+  passwordResetTokens   PasswordResetToken[]
+  emailVerifyTokens     EmailVerificationToken[]
+  auditLogs             AuditLog[]
+  mediaAssets           MediaAsset[]
+  favorites             UserFavorite[]
+  feedingLogs           FeedingLog[]
+
+  @@index([email])
+}
+
+model Patient {
+  id             String   @id @default(cuid())
+  code           String   @unique
+  previousCode   String?
+  barcodePayload String
+  name           String
+  species        String
+  breed          String
+  age            String
+  sex            String
+  weight         String?
+  color          String?
+  microchip      String   @default("No")
+  ownerName      String
+  ownerPhone     String?
+  ownerEmail     String?
+  photo          String?
+  photoAssetId   String?
+  vetId          String
+  ownerUserId    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  vet            User            @relation("VetPatients", fields: [vetId], references: [id])
+  ownerUser      User?           @relation("OwnerPatients", fields: [ownerUserId], references: [id])
+  medicalRecords MedicalRecord[]
+  feeding        Feeding?
+  reminders      Reminder[]
+  appointments   Appointment[]
+  accesses       PatientAccess[]
+  linkRequests   LinkRequest[]
+  mediaAssets    MediaAsset[]
+  auditLogs      AuditLog[]
+  feedingLogs    FeedingLog[]
+
+  @@index([code])
+  @@index([previousCode])
+  @@index([vetId])
+  @@index([ownerUserId])
+  @@index([vetId, name, ownerName])
+}
+
+model PatientAccess {
+  id        String    @id @default(cuid())
+  userId    String
+  patientId String
+  role      String
+  status    String    @default("ACTIVE")
+  grantedBy String?
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  user    User    @relation(fields: [userId], references: [id])
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@unique([userId, patientId])
+  @@index([userId])
+  @@index([patientId])
+  @@index([patientId, status])
+}
+
+model LinkRequest {
+  id            String    @id @default(cuid())
+  requesterId   String
+  patientId     String
+  requestedRole String
+  status        String    @default("PENDING")
+  decidedBy     String?
+  decidedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  requester User    @relation("LinkRequester", fields: [requesterId], references: [id])
+  decider   User?   @relation("LinkDecider", fields: [decidedBy], references: [id])
+  patient   Patient @relation(fields: [patientId], references: [id])
+
+  @@index([patientId, status])
+  @@index([requesterId])
+  @@index([status])
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  userAgent String?
+  ip        String?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model MediaAsset {
+  id         String   @id @default(cuid())
+  storageKey String
+  bucket     String
+  mimeType   String
+  sizeBytes  Int
+  sha256     String?
+  visibility String   @default("private")
+  kind       String   @default("pet")
+  patientId  String?
+  uploadedBy String?
+  createdAt  DateTime @default(now())
+
+  patient  Patient? @relation(fields: [patientId], references: [id])
+  uploader User?    @relation(fields: [uploadedBy], references: [id])
+
+  @@index([patientId])
+  @@index([storageKey])
+  @@index([kind])
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  actorId      String?
+  action       String
+  resourceType String
+  resourceId   String?
+  patientId    String?
+  meta         String?
+  ip           String?
+  createdAt    DateTime @default(now())
+
+  actor   User?    @relation(fields: [actorId], references: [id])
+  patient Patient? @relation(fields: [patientId], references: [id])
+
+  @@index([actorId, createdAt])
+  @@index([patientId, createdAt])
+  @@index([resourceType, resourceId])
+  @@index([createdAt])
+}
+
+model MedicalRecord {
+  id                     String   @id @default(cuid())
+  consultationNumber     String   @unique
+  type                   String   @default("GENERAL")
+  date                   String
+  time                   String?
+  reason                 String
+  diagnosis              String?
+  treatment              String?
+  vetName                String
+  ownerName              String?
+  responsibleName        String?
+  status                 String   @default("En Proceso")
+  weightAtVisit          String?
+  temperature            String?
+  heartRate              String?
+  respiratoryRate        String?
+  physicalExam           String?
+  prescriptions          String?
+  medication             String?
+  results                String?
+  observations           String?
+  notes                  String?
+  privateNotes           String?
+  typePayload            Json?
+  followUpDate           String?
+  followUpTime           String?
+  relatedConsultationId  String?
+  followUpAppointmentId  String?
+  petId                  String
+  createdAt              DateTime @default(now())
+
+  pet                   Patient         @relation(fields: [petId], references: [id])
+  relatedConsultation   MedicalRecord?  @relation("RelatedConsult", fields: [relatedConsultationId], references: [id])
+  relatedFrom           MedicalRecord[] @relation("RelatedConsult")
+  followUpAppointment   Appointment?    @relation(fields: [followUpAppointmentId], references: [id])
+
+  @@index([petId, date])
+  @@index([type])
+  @@index([consultationNumber])
+}
+
+model Feeding {
+  id                 String  @id @default(cuid())
+  petId              String  @unique
+  recommendedAmount  String
+  mealsPerDay        Int
+  specialInstructions String?
+  schedule           String?
+  weightKg           Float?
+  caloriesPerDay     Int?
+  formulaVersion     String?
+  vetNotes           String?
+  foodType           String?
+  brand              String?
+  quantity           String?
+  frequency          String?
+  restrictions       String?
+  allergies          String?
+  observations       String?
+  vetRecommendations String?
+  allowedFoods       String?
+  forbiddenFoods     String?
+  /// Clinical goal: control_peso | mantenimiento | crecimiento | otro
+  objective          String?
+  targetWeightKg     Float?
+  startDate          String?
+  reviewDate         String?
+  /// ACTIVE | PAUSED | FINISHED
+  status             String  @default("ACTIVE")
+
+  pet   Patient       @relation(fields: [petId], references: [id])
+  meals FeedingMeal[]
+}
+
+model FeedingMeal {
+  id        String @id @default(cuid())
+  feedingId String
+  label     String
+  time      String
+  amount    String?
+  food      String?
+  notes     String?
+  sortOrder Int    @default(0)
+
+  feeding Feeding      @relation(fields: [feedingId], references: [id], onDelete: Cascade)
+  logs    FeedingLog[]
+
+  @@index([feedingId])
+}
+
+model FeedingLog {
+  id              String    @id @default(cuid())
+  mealId          String
+  patientId       String
+  scheduledDate   String
+  /// EATEN | PENDING | UNLOGGED | PARTIAL
+  status          String    @default("PENDING")
+  /// NORMAL | LESS | REFUSED | SKIPPED | OTHER
+  reason          String?
+  notes           String?
+  loggedAt        DateTime?
+  loggedByUserId  String?
+  createdAt       DateTime  @default(now())
+
+  meal     FeedingMeal @relation(fields: [mealId], references: [id], onDelete: Cascade)
+  patient  Patient     @relation(fields: [patientId], references: [id])
+  loggedBy User?       @relation(fields: [loggedByUserId], references: [id])
+
+  @@unique([mealId, scheduledDate])
+  @@index([patientId, scheduledDate])
+}
+
+model UserFavorite {
+  id         String   @id @default(cuid())
+  userId     String
+  targetType String
+  targetId   String
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, targetType, targetId])
+  @@index([userId])
+}
+
+model Reminder {
+  id                  String    @id @default(cuid())
+  title               String
+  description         String?
+  date                String
+  time                String?
+  type                String    @default("recordatorio")
+  category            String?
+  priority            String?   @default("media")
+  color               String?
+  icon                String?
+  notifyEnabled       Boolean   @default(true)
+  notes               String?
+  recurrence          String?   @default("none")
+  completed           Boolean   @default(false)
+  completedAt         DateTime?
+  createdByUserId     String?
+  notificationMessage String?
+  petId               String
+  appointmentId       String?
+  feedingMealId       String?
+  createdAt           DateTime  @default(now())
+
+  pet         Patient      @relation(fields: [petId], references: [id])
+  appointment Appointment? @relation(fields: [appointmentId], references: [id])
+
+  @@index([petId])
+  @@index([petId, priority])
+  @@index([appointmentId])
+  @@index([createdByUserId])
+  @@index([feedingMealId])
+}
+
+model Appointment {
+  id               String    @id @default(cuid())
+  petName          String
+  ownerName        String
+  date             String
+  time             String
+  notes            String?
+  status           String    @default("Programada")
+  attendanceStatus String    @default("Pendiente")
+  ownerConfirmedAt DateTime?
+  vetId            String
+  patientId        String?
+  createdAt        DateTime  @default(now())
+
+  vet             User            @relation(fields: [vetId], references: [id])
+  patient         Patient?        @relation(fields: [patientId], references: [id])
+  reminders       Reminder[]
+  sourceConsults  MedicalRecord[]
+
+  @@index([vetId, date])
+  @@index([vetId, date, time])
+  @@index([vetId, date, status])
+  @@index([patientId])
+}
+
+model ClinicConfig {
+  id            String  @id @default(cuid())
+  vetId         String  @unique
+  clinicName    String?
+  clinicAddress String?
+  clinicPhone   String?
+  clinicEmail   String?
+  clinicHours   String?
+  mapUrl        String?
+  language      String  @default("Español")
+  timezone      String  @default("GMT-6")
+  dateFormat    String  @default("DD/MM/AAAA")
+  theme         String  @default("Claro")
+  notifications Boolean @default(true)
+  sounds        Boolean @default(false)
+
+  vet User @relation(fields: [vetId], references: [id])
+
+  @@index([vetId])
+}

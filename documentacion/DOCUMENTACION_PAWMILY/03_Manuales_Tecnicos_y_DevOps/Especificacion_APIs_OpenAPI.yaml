@@ -1,0 +1,372 @@
+openapi: 3.0.3
+info:
+  title: PawMily API
+  version: "1.0.0"
+  description: |
+    API REST de PawMily (Express Clean Architecture + DDD).
+    Base producción: https://api-production-66b1.up.railway.app/api
+  contact:
+    name: Equipo PawMily
+servers:
+  - url: https://api-production-66b1.up.railway.app/api
+    description: Producción Railway
+  - url: http://127.0.0.1:3000/api
+    description: Desarrollo local
+tags:
+  - name: Health
+  - name: Auth
+  - name: Patients
+  - name: Appointments
+  - name: Config
+  - name: Favorites
+  - name: Media
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check público
+      responses:
+        "200":
+          description: Servicio OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Registro
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, name]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+                name: { type: string }
+                role: { type: string, enum: [vet, owner] }
+      responses:
+        "201": { description: Usuario creado / tokens }
+        "400": { description: Validación }
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: accessToken + refreshToken + user
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Renovar access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        "200": { description: Nuevo accessToken }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revocar refresh
+      responses:
+        "200": { description: OK }
+  /auth/profile:
+    get:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      summary: Perfil actual
+      responses:
+        "200": { description: User }
+    put:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      summary: Actualizar perfil
+      responses:
+        "200": { description: User actualizado }
+  /patients:
+    get:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Listar pacientes (vet)
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+        - in: query
+          name: search
+          schema: { type: string }
+      responses:
+        "200": { description: data + meta }
+    post:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Crear paciente (vet)
+      responses:
+        "201": { description: Patient }
+  /patients/mine:
+    get:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Mascotas del owner
+      responses:
+        "200": { description: Lista lean }
+  /patients/code/{code}:
+    get:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Obtener por código PAW
+      parameters:
+        - in: path
+          name: code
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Patient }
+  /patients/link:
+    post:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Vincular (legacy/helper)
+      responses:
+        "200": { description: Patient o status }
+  /patients/link-requests:
+    post:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Crear solicitud de vínculo por código
+      responses:
+        "201": { description: LinkRequest }
+  /patients/link-requests/pending:
+    get:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Solicitudes pendientes
+      responses:
+        "200": { description: Lista }
+  /patients/link-requests/{id}/approve:
+    post:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Aprobar solicitud
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: LinkRequest }
+  /patients/link-requests/{id}/reject:
+    post:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Rechazar solicitud
+      responses:
+        "200": { description: LinkRequest }
+  /patients/{id}:
+    get:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Detalle paciente
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Patient }
+    put:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Actualizar paciente
+      responses:
+        "200": { description: Patient }
+    delete:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Eliminar paciente
+      responses:
+        "200": { description: OK }
+  /patients/{id}/barcode:
+    get:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Datos de código de barras
+      responses:
+        "200": { description: code/format/imageUrl }
+  /patients/{id}/medical-records:
+    get:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Historial médico
+      responses:
+        "200": { description: Lista }
+    post:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Crear registro médico (vet)
+      responses:
+        "201": { description: MedicalRecord }
+  /patients/{id}/feeding:
+    get:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Obtener alimentación
+      responses:
+        "200": { description: Feeding }
+    put:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Actualizar feeding
+      responses:
+        "200": { description: Feeding }
+  /patients/{id}/diet:
+    post:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Definir dieta (vet)
+      responses:
+        "200": { description: Feeding }
+  /patients/{id}/reminders:
+    get:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Listar recordatorios
+      responses:
+        "200": { description: Lista }
+    post:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Crear recordatorio
+      responses:
+        "201": { description: Reminder }
+  /patients/reminders/{id}:
+    put:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Actualizar recordatorio
+      responses:
+        "200": { description: Reminder }
+  /patients/reminders/{id}/complete:
+    post:
+      tags: [Patients]
+      security: [{ bearerAuth: [] }]
+      summary: Completar recordatorio
+      responses:
+        "200": { description: Reminder }
+  /appointments:
+    get:
+      tags: [Appointments]
+      security: [{ bearerAuth: [] }]
+      summary: Listar citas (vet)
+      responses:
+        "200": { description: data }
+    post:
+      tags: [Appointments]
+      security: [{ bearerAuth: [] }]
+      summary: Crear cita
+      responses:
+        "201": { description: Appointment }
+  /appointments/mine:
+    get:
+      tags: [Appointments]
+      security: [{ bearerAuth: [] }]
+      summary: Citas del owner
+      responses:
+        "200": { description: data }
+  /appointments/month:
+    get:
+      tags: [Appointments]
+      security: [{ bearerAuth: [] }]
+      summary: Citas por mes
+      responses:
+        "200": { description: data }
+  /appointments/{id}/confirm:
+    post:
+      tags: [Appointments]
+      security: [{ bearerAuth: [] }]
+      summary: Confirmar asistencia (owner)
+      responses:
+        "200": { description: Appointment }
+  /config:
+    get:
+      tags: [Config]
+      security: [{ bearerAuth: [] }]
+      summary: Config clínica
+      responses:
+        "200": { description: ClinicConfig }
+    put:
+      tags: [Config]
+      security: [{ bearerAuth: [] }]
+      summary: Actualizar config
+      responses:
+        "200": { description: ClinicConfig }
+  /favorites:
+    get:
+      tags: [Favorites]
+      security: [{ bearerAuth: [] }]
+      summary: Listar favoritos
+      responses:
+        "200": { description: Lista }
+    post:
+      tags: [Favorites]
+      security: [{ bearerAuth: [] }]
+      summary: Agregar favorito
+      responses:
+        "201": { description: Favorite }
+  /media/upload-url:
+    post:
+      tags: [Media]
+      security: [{ bearerAuth: [] }]
+      summary: URL firmada de subida
+      responses:
+        "200": { description: upload URL }
+  /media/{assetId}/url:
+    get:
+      tags: [Media]
+      security: [{ bearerAuth: [] }]
+      summary: URL de lectura de asset
+      parameters:
+        - in: path
+          name: assetId
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: url }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        message: { type: string }
+        error: { type: string }

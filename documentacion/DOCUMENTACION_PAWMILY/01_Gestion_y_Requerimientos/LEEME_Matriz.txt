@@ -1,0 +1,11 @@
+# Matriz de Trazabilidad — PawMily
+
+Archivo principal para Excel: **`Matriz_de_Trazabilidad.csv`**
+
+Para cumplir el entregable Classroom (`.xlsx`):
+1. Abrir el CSV con Excel / Google Sheets.  
+2. Guardar como **`Matriz_de_Trazabilidad.xlsx`**.
+
+Columnas: ID_Requerimiento, Descripcion, Historia_Usuario, Componente, Vista_o_Endpoint, Estado_Implementacion, Evidencia.
+
+Cubre RF/RNF del SRS y su mapeo a Backend, Web (PAWMYLI) y App Android.

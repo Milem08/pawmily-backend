@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="520">
+<rect width="100%" height="100%" fill="#EEF2F5"/>
+<text x="20" y="36" font-family="Arial" font-size="22" fill="#2C5F5A" font-weight="bold">Despliegue</text>
+<rect x="30" y="70" width="250" height="70" rx="10" fill="#2C5F5A"/>
+<text x="50" y="112" font-family="Arial" font-size="16" fill="#fff">Vercel Web</text>
+<rect x="330" y="70" width="250" height="70" rx="10" fill="#2C5F5A"/>
+<text x="350" y="112" font-family="Arial" font-size="16" fill="#fff">Railway API</text>
+<rect x="30" y="180" width="250" height="70" rx="10" fill="#2C5F5A"/>
+<text x="50" y="222" font-family="Arial" font-size="16" fill="#fff">Supabase DB</text>
+<rect x="330" y="180" width="250" height="70" rx="10" fill="#2C5F5A"/>
+<text x="350" y="222" font-family="Arial" font-size="16" fill="#fff">Android</text>
+</svg>

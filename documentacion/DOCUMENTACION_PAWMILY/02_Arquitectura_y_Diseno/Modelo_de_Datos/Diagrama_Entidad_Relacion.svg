@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="520">
+<rect width="100%" height="100%" fill="#EEF2F5"/>
+<text x="20" y="36" font-family="Arial" font-size="22" fill="#2C5F5A" font-weight="bold">DER PawMily</text>
+<rect x="30" y="70" width="250" height="70" rx="10" fill="#2C5F5A"/>
+<text x="50" y="112" font-family="Arial" font-size="16" fill="#fff">User</text>
+<rect x="330" y="70" width="250" height="70" rx="10" fill="#2C5F5A"/>
+<text x="350" y="112" font-family="Arial" font-size="16" fill="#fff">Patient</text>
+<rect x="30" y="180" width="250" height="70" rx="10" fill="#2C5F5A"/>
+<text x="50" y="222" font-family="Arial" font-size="16" fill="#fff">LinkRequest</text>
+<rect x="330" y="180" width="250" height="70" rx="10" fill="#2C5F5A"/>
+<text x="350" y="222" font-family="Arial" font-size="16" fill="#fff">MedicalRecord</text>
+<rect x="30" y="290" width="250" height="70" rx="10" fill="#2C5F5A"/>
+<text x="50" y="332" font-family="Arial" font-size="16" fill="#fff">Feeding</text>
+<rect x="330" y="290" width="250" height="70" rx="10" fill="#2C5F5A"/>
+<text x="350" y="332" font-family="Arial" font-size="16" fill="#fff">Reminder</text>
+<rect x="30" y="400" width="250" height="70" rx="10" fill="#2C5F5A"/>
+<text x="50" y="442" font-family="Arial" font-size="16" fill="#fff">Appointment</text>
+</svg>

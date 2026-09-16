@@ -1,0 +1,27 @@
+ID_Requerimiento,Descripcion,Historia_Usuario,Componente,Vista_o_Endpoint,Estado_Implementacion,Evidencia
+RF-AUTH-01,Registro usuario,HU-A01,Backend+Web+Android,POST /api/auth/register,Implementado,authRoutes.ts / registro.html / RegisterActivity
+RF-AUTH-02,Login JWT,HU-A02,Backend+Web+Android,POST /api/auth/login,Implementado,authRoutes.ts / auth.js / LoginActivity
+RF-AUTH-03,Refresh token,HU-A03,Backend+Android,POST /api/auth/refresh,Implementado,TokenRefresher / Auth401RefreshInterceptor
+RF-AUTH-05,Perfil GET/PUT,HU-F01,Backend+Web+Android,/api/auth/profile,Implementado,ProfileFragment / perfil.js
+RF-PAT-01,Crear paciente PAW,HU-B01,Backend+Web,POST /api/patients,Implementado,patientRoutes + pacientes UI
+RF-PAT-02,CRUD pacientes vet,HU-B02,Backend+Web,GET/PUT/DELETE /api/patients,Implementado,patientRoutes
+RF-PAT-03,Barcode Code128,HU-B03,Backend+Web+Android,GET /api/patients/:id/barcode,Implementado,BarcodeBitmap / barcode-hid.js
+RF-PAT-04,Solicitud de link,HU-C01,Backend+Android,POST /api/patients/link-request,Implementado,RemotePetRepository.linkPet
+RF-PAT-05,Aprobar/rechazar link,HU-C03,Backend+Web+Android,/link-requests/:id/approve|reject,Implementado,PetsFragment pendientes
+RF-PAT-06,Listar mascotas owner,HU-C01,Backend+Android,GET /api/patients/mine,Implementado,PetsFragment / HomeFragment
+RF-AND-02,Escanear cámara,HU-C02,Android,BarcodeScanActivity,Implementado,BarcodeScanActivity
+RF-MED-01,CRUD historial vet,HU-D02,Backend+Web,/medical-records,Implementado,patientRoutes
+RF-MED-02,Consultar historial,HU-D02,Backend+Android+Web,GET medical-records,Implementado,HistoryFragment / paciente.js
+RF-FED-01,Dieta vet,HU-D03,Backend+Web,POST diet / PUT feeding,Implementado,patientRoutes
+RF-FED-02,Ver alimentación,HU-D03,Backend+Android,GET feeding,Implementado,FeedingFragment
+RF-REM-01,CRUD recordatorios,HU-E01,Backend+Android+Web,/reminders,Implementado,PetRemindersActivity / API
+RF-REM-04,Notificaciones locales,HU-F02,Android,ReminderNotifier,Implementado,Profile switch + AlarmManager
+RF-APT-01,Agenda vet,HU-E03,Backend+Web,/appointments,/month,Implementado,agenda.js
+RF-APT-02,Citas owner,HU-E02,Backend+Android,GET /appointments/mine,Implementado,ApiService
+RF-APT-03,Confirmar asistencia,HU-E02,Backend+Android,POST /appointments/:id/confirm,Implementado,API
+RF-CFG-01,Config clínica,HU-B02,Backend+Web,/api/config,Implementado,configuracion.js
+RF-WEB-01,Portal vet completo,HU-B*,Web,dashboard/pacientes/agenda,Implementado,PAWMYLI
+RF-AND-01,App owner navegación,HU-C*/D*/E*/F*,Android,Dashboard tabs,Implementado,DashboardActivity
+RNF-01,HTTPS+JWT+rate limit,—,Backend,helmet cors limiter,Implementado,createApp.ts
+RNF-05,Clean/DDD,—,Backend,src/domain application interfaces,Implementado,ADR-001
+RNF-07,Contrato REST único,—,Todos,/api,Implementado,Retrofit + PawApi
