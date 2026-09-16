@@ -294,7 +294,9 @@ export class GetFeedingSummary {
     let pending = 0;
     let scheduled = 0;
 
-    for (const day of enumerateDays(from, to)) {
+    // Only count meals due so far (through today). Future slots must not dilute % .
+    const endForCompliance = to < today ? to : today;
+    for (const day of enumerateDays(from, endForCompliance)) {
       for (const meal of meals) {
         scheduled += 1;
         const log = byKey.get(`${meal.id}|${day}`);
