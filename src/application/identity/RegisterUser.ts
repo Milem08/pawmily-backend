@@ -15,6 +15,7 @@ export interface RegisterUserInput {
   clinic?: string;
   address?: string;
   license?: string;
+  photo?: string;
 }
 
 export class RegisterUser {
@@ -69,6 +70,7 @@ export class RegisterUser {
       clinic: input.clinic ?? null,
       address: input.address ?? null,
       license: input.license ?? null,
+      photo: input.photo ?? null,
     });
 
     const session = await this.sessions.forUser(

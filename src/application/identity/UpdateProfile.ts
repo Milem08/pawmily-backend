@@ -4,6 +4,7 @@ import { BcryptHasher } from '../../infrastructure/auth/BcryptHasher';
 
 export interface UpdateProfileInput {
   name?: string;
+  email?: string;
   phone?: string;
   clinic?: string;
   address?: string;
@@ -25,6 +26,14 @@ export class UpdateProfile {
     }
 
     const data: UpdateProfileInput = { ...input };
+    if (input.email) {
+      const normalized = input.email.trim().toLowerCase();
+      const other = await this.users.findByEmail(normalized);
+      if (other && other.id !== userId) {
+        throw new DomainError('Ese correo ya está en uso', 409);
+      }
+      data.email = normalized;
+    }
     if (input.password) {
       data.password = await this.hasher.hash(input.password);
     }

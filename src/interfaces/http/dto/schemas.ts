@@ -10,6 +10,7 @@ export const registerSchema = z
     clinic: z.string().optional(),
     address: z.string().optional(),
     license: z.string().optional(),
+    photo: z.string().optional(),
   })
   .refine((d) => Boolean(d.email || d.phone), {
     message: 'Email or phone is required',
@@ -27,6 +28,7 @@ export const loginSchema = z
 
 export const updateProfileSchema = z.object({
   name: z.string().min(1).optional(),
+  email: z.string().email().optional(),
   phone: z.string().optional(),
   clinic: z.string().optional(),
   address: z.string().optional(),
