@@ -69,7 +69,9 @@ import {
   ListAppointmentsByMonth,
   ListMyAppointments,
   PostponeAppointment,
+  RejectAppointmentRequest,
   RequestAppointment,
+  SuggestAppointmentSlot,
   UpdateAppointment,
 } from '../application/scheduling/AppointmentUseCases';
 import { GetClinicConfig, UpdateClinicConfig } from '../application/clinic/ClinicUseCases';
@@ -172,8 +174,17 @@ export function createContainer() {
     deleteReminder: new DeleteReminder(patients, accesses),
     createAppointment: new CreateAppointment(appointments, patients),
     requestAppointment: new RequestAppointment(appointments, patients),
-    postponeAppointment: new PostponeAppointment(appointments, patients),
+    suggestAppointmentSlot: (() => {
+      const suggest = new SuggestAppointmentSlot(appointments, patients);
+      return suggest;
+    })(),
+    postponeAppointment: new PostponeAppointment(
+      appointments,
+      patients,
+      new SuggestAppointmentSlot(appointments, patients),
+    ),
     acceptAppointmentRequest: new AcceptAppointmentRequest(appointments, patients),
+    rejectAppointmentRequest: new RejectAppointmentRequest(appointments, patients),
     listAppointments: new ListAppointments(appointments),
     listMyAppointments: new ListMyAppointments(appointments, patients),
     confirmAppointmentAttendance: new ConfirmAppointmentAttendance(appointments, patients),

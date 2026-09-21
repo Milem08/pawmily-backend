@@ -6,7 +6,9 @@ import {
   acceptAppointmentSchema,
   createAppointmentSchema,
   postponeAppointmentSchema,
+  rejectAppointmentSchema,
   requestAppointmentSchema,
+  suggestAppointmentSchema,
   updateAppointmentSchema,
 } from '../dto/schemas';
 
@@ -72,9 +74,35 @@ export function appointmentRoutes(container: Container): Router {
     }
   });
 
+  router.post('/:id/suggest', validateBody(suggestAppointmentSchema), async (req, res, next) => {
+    try {
+      const appointment = await container.suggestAppointmentSlot.execute(
+        req.user!,
+        req.params.id,
+        req.body,
+      );
+      res.json(appointment.props);
+    } catch (err) {
+      next(err);
+    }
+  });
+
   router.post('/:id/accept', validateBody(acceptAppointmentSchema), async (req, res, next) => {
     try {
       const appointment = await container.acceptAppointmentRequest.execute(
+        req.user!,
+        req.params.id,
+        req.body,
+      );
+      res.json(appointment.props);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/:id/reject', validateBody(rejectAppointmentSchema), async (req, res, next) => {
+    try {
+      const appointment = await container.rejectAppointmentRequest.execute(
         req.user!,
         req.params.id,
         req.body,

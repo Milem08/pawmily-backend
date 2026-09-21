@@ -281,6 +281,16 @@ export const postponeAppointmentSchema = z.object({
   notes: z.string().max(2000).optional(),
 });
 
+export const suggestAppointmentSchema = z.object({
+  date: z.string().min(1),
+  time: z.string().min(1),
+  notes: z.string().max(2000).optional(),
+});
+
+export const rejectAppointmentSchema = z.object({
+  notes: z.string().max(2000).optional(),
+});
+
 export const updateAppointmentSchema = createAppointmentSchema.partial().extend({
   status: z.string().optional(),
   patientId: z.string().min(1).nullable().optional(),
