@@ -45,6 +45,7 @@ import {
   RejectLinkRequest,
   RevokePatientMember,
 } from '../application/access/LinkRequestUseCases';
+import { ScheduleMedicationReminders } from '../application/patients/ScheduleMedicationReminders';
 import {
   ConfirmMediaUpload,
   CreateMediaUploadUrl,
@@ -153,6 +154,7 @@ export function createContainer() {
     updateMedicalRecord: new UpdateMedicalRecord(patients, accesses),
     deleteMedicalRecord: new DeleteMedicalRecord(patients, accesses),
     listMedicalRecords: new ListMedicalRecords(patients, accesses),
+    scheduleMedicationReminders: new ScheduleMedicationReminders(patients, accesses),
     generateDiet: new GenerateDiet(patients, accesses),
     updateFeeding,
     getFeeding: new GetFeeding(patients, accesses),

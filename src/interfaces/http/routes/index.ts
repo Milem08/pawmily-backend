@@ -7,6 +7,7 @@ import { appointmentRoutes } from './appointmentRoutes';
 import { configRoutes } from './configRoutes';
 import { mediaRoutes } from './mediaRoutes';
 import { favoriteRoutes } from './favoriteRoutes';
+import { inboxRoutes } from './inboxRoutes';
 
 export function buildApiRouter(container: Container): Router {
   const api = Router();
@@ -17,5 +18,6 @@ export function buildApiRouter(container: Container): Router {
   api.use('/config', configRoutes(container));
   api.use('/media', mediaRoutes(container));
   api.use('/favorites', favoriteRoutes(container));
+  api.use('/inbox', inboxRoutes(container));
   return api;
 }

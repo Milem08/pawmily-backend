@@ -383,15 +383,35 @@ export class AddMedicalRecord {
     };
     let record = await this.patients.addMedicalRecord(petId, enriched);
 
+    // Do NOT auto-create dose reminders: first dose time is unknown at consult save.
+    // Instead notify owners via Correo clínico so they can schedule doses explicitly.
     try {
-      const { createMedicationDoseReminders } = await import('./MedicationDoseReminders');
-      await createMedicationDoseReminders(this.patients, petId, actor.id, patient.props.name, {
-        medication: enriched.medication,
-        date: enriched.date,
-        time: enriched.time,
-        typePayload: enriched.typePayload as Record<string, unknown> | undefined,
-        consultationNumber: record.consultationNumber,
-      });
+      const payload =
+        enriched.typePayload && typeof enriched.typePayload === 'object'
+          ? (enriched.typePayload as Record<string, unknown>)
+          : {};
+      const medName = String(
+        enriched.medication ||
+          payload.medication ||
+          payload.vaccine ||
+          payload.product ||
+          '',
+      ).trim();
+      if (medName) {
+        const { notifyPatientOwners } = await import('../inbox/ClinicInbox');
+        await notifyPatientOwners(this.accesses, petId, patient.props.ownerUserId, {
+          type: 'prescription',
+          title: `Nueva receta: ${medName}`,
+          body: `La clínica indicó ${medName} para ${patient.props.name}. Abre el reporte y programa la primera toma cuando sepas a qué hora empezar.`,
+          payload: {
+            patientId: petId,
+            recordId: record.id,
+            medication: medName,
+            consultationNumber: record.consultationNumber,
+            action: 'schedule_medication',
+          },
+        });
+      }
     } catch {
       // Non-blocking for clinical save
     }

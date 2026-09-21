@@ -38,6 +38,7 @@ model User {
   mediaAssets           MediaAsset[]
   favorites             UserFavorite[]
   feedingLogs           FeedingLog[]
+  clinicMessages        ClinicMessage[]
 
   @@index([email])
 }
@@ -76,6 +77,7 @@ model Patient {
   mediaAssets    MediaAsset[]
   auditLogs      AuditLog[]
   feedingLogs    FeedingLog[]
+  clinicMessages ClinicMessage[]
 
   @@index([code])
   @@index([previousCode])
@@ -409,4 +411,25 @@ model ClinicConfig {
   vet User @relation(fields: [vetId], references: [id])
 
   @@index([vetId])
+}
+
+/// In-app "correo clínico" — clinic notices for owners and appointment requests for vets.
+model ClinicMessage {
+  id        String    @id @default(cuid())
+  userId    String
+  patientId String?
+  type      String
+  title     String
+  body      String
+  payload   Json?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  patient Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+  @@index([patientId])
+  @@index([type])
 }

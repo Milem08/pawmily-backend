@@ -174,7 +174,7 @@ export class RequestAppointment {
       throw new DomainError('La mascota no tiene veterinario asignado', 400);
     }
 
-    return this.appointments.create({
+    const appointment = await this.appointments.create({
       petName: patient.props.name,
       ownerName: patient.props.ownerName,
       date: data.date,
@@ -185,6 +185,30 @@ export class RequestAppointment {
       status: 'Solicitada',
       attendanceStatus: 'Pendiente',
     });
+
+    try {
+      const { createClinicMessage } = await import('../inbox/ClinicInbox');
+      await createClinicMessage({
+        userId: vetId,
+        patientId: patient.id,
+        type: 'appointment_request',
+        title: `Solicitud de cita: ${patient.props.name}`,
+        body: `${patient.props.ownerName} solicita cita el ${data.date} a las ${data.time}.${
+          data.notes?.trim() ? ` Nota: ${data.notes.trim()}` : ''
+        }`,
+        payload: {
+          appointmentId: appointment.id,
+          patientId: patient.id,
+          date: data.date,
+          time: data.time,
+          action: 'review_appointment',
+        },
+      });
+    } catch {
+      // Non-blocking
+    }
+
+    return appointment;
   }
 }
 

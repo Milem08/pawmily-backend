@@ -14,7 +14,7 @@ function parseDurationDays(raw: string): number {
 }
 
 /** Hours between doses from free-text frequency. */
-function parseIntervalHours(raw: string): number {
+export function parseIntervalHours(raw: string): number {
   const text = raw.toLowerCase();
   const every = text.match(/cada\s+(\d+)\s*h/);
   if (every) return Math.max(1, Number(every[1]));
@@ -41,22 +41,30 @@ function toTimeHm(d: Date): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+export type ScheduleMedicationOptions = {
+  medication?: string | null;
+  date: string;
+  time?: string | null;
+  typePayload?: Payload;
+  consultationNumber?: string;
+  /** Explicit first dose overrides (owner/vet schedules when they know the start time). */
+  firstDoseDate?: string;
+  firstDoseTime?: string;
+  intervalHours?: number;
+  durationDays?: number;
+};
+
 /**
- * Creates one reminder per dose from consult medication + typePayload fields.
+ * Creates one reminder per dose from consult medication + schedule options.
  * Caps at 60 reminders to protect school/demo environments.
+ * Does NOT run automatically on consult save — call from schedule endpoint.
  */
 export async function createMedicationDoseReminders(
   patients: PatientRepository,
   petId: string,
   actorId: string,
   petName: string,
-  data: {
-    medication?: string | null;
-    date: string;
-    time?: string | null;
-    typePayload?: Payload;
-    consultationNumber?: string;
-  },
+  data: ScheduleMedicationOptions,
 ): Promise<number> {
   const payload = (data.typePayload && typeof data.typePayload === 'object'
     ? data.typePayload
@@ -78,12 +86,20 @@ export async function createMedicationDoseReminders(
   const durationRaw =
     asString(payload.duration) || asString(payload.days) || asString(payload.treatmentDays) || '7';
 
-  const intervalH = parseIntervalHours(frequency);
-  const days = parseDurationDays(durationRaw);
+  const intervalH =
+    typeof data.intervalHours === 'number' && data.intervalHours > 0
+      ? Math.min(Math.max(1, Math.round(data.intervalHours)), 48)
+      : parseIntervalHours(frequency);
+  const days =
+    typeof data.durationDays === 'number' && data.durationDays > 0
+      ? Math.min(Math.max(1, Math.round(data.durationDays)), 30)
+      : parseDurationDays(durationRaw);
   const dosesPerDay = Math.max(1, Math.round(24 / intervalH));
   const total = Math.min(days * dosesPerDay, 60);
 
-  const start = new Date(`${data.date}T${(data.time || '09:00').slice(0, 5)}:00`);
+  const startDate = (data.firstDoseDate || data.date).slice(0, 10);
+  const startTime = (data.firstDoseTime || data.time || '09:00').slice(0, 5);
+  const start = new Date(`${startDate}T${startTime}:00`);
   if (Number.isNaN(start.getTime())) return 0;
 
   let created = 0;
@@ -92,9 +108,7 @@ export async function createMedicationDoseReminders(
     const date = toDateIso(when);
     const time = toTimeHm(when);
     const title = `Medicamento: ${medName}`;
-    const description = [dose, frequency, data.consultationNumber]
-      .filter(Boolean)
-      .join(' · ');
+    const description = [dose, frequency, data.consultationNumber].filter(Boolean).join(' · ');
     const notificationMessage = buildReminderNotificationMessage({
       type: 'recordatorio',
       title,

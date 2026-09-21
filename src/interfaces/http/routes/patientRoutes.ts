@@ -11,6 +11,7 @@ import {
   linkRequestSchema,
   medicalRecordSchema,
   reminderSchema,
+  scheduleMedicationSchema,
   updateMedicalRecordSchema,
   updatePatientSchema,
   updateReminderSchema,
@@ -412,6 +413,24 @@ export function patientRoutes(container: Container): Router {
     }
   });
 
+  router.post(
+    '/:id/medical-records/:recordId/schedule-medication',
+    validateBody(scheduleMedicationSchema),
+    async (req, res, next) => {
+      try {
+        const result = await container.scheduleMedicationReminders.execute(
+          req.user!,
+          req.params.id,
+          req.params.recordId,
+          req.body,
+        );
+        res.status(201).json(result);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   router.post('/:id/diet', validateBody(dietSchema), async (req, res, next) => {
     try {
       const feeding = await container.generateDiet.execute(req.user!, req.params.id, req.body);
@@ -444,6 +463,7 @@ export function patientRoutes(container: Container): Router {
       const summary = await container.getFeedingSummary.execute(req.user!, req.params.id, {
         from: typeof req.query.from === 'string' ? req.query.from : undefined,
         to: typeof req.query.to === 'string' ? req.query.to : undefined,
+        asOf: typeof req.query.asOf === 'string' ? req.query.asOf : undefined,
       });
       res.json(summary);
     } catch (err) {
