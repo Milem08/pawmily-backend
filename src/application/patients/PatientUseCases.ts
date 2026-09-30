@@ -57,7 +57,7 @@ export class CreatePatient {
     data: {
       name: string;
       species: string;
-      breed: string;
+      breed?: string;
       age: string;
       sex: string;
       weight?: string;
@@ -83,6 +83,7 @@ export class CreatePatient {
     const { feeding: _feeding, firstConsultation: _firstConsultation, ...patientData } = data;
     const patient = await this.patients.create({
       ...patientData,
+      breed: (patientData.breed ?? '').trim(),
       code,
       barcodePayload: code,
       vetId: actor.id,

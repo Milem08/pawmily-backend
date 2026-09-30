@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { speciesRequiresBreed } from '../../../domain/patients/speciesCatalog';
 
 export const registerSchema = z
   .object({
@@ -57,10 +58,10 @@ export const consultationTypeSchema = z.enum([
   'SEGUIMIENTO',
 ]);
 
-export const createPatientSchema = z.object({
+const patientCreateObject = z.object({
   name: z.string().min(1),
   species: z.string().min(1),
-  breed: z.string().min(1),
+  breed: z.string().optional(),
   age: z.string().min(1),
   sex: z.string().min(1),
   weight: z.string().optional(),
@@ -98,9 +99,27 @@ export const createPatientSchema = z.object({
     .optional(),
 });
 
-export const updatePatientSchema = createPatientSchema
-  .omit({ feeding: true, firstConsultation: true })
-  .partial();
+const patientCoreSchema = patientCreateObject.omit({ feeding: true, firstConsultation: true });
+
+export const createPatientSchema = patientCreateObject.superRefine((data, ctx) => {
+  if (speciesRequiresBreed(data.species) && !String(data.breed ?? '').trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['breed'],
+      message: 'La raza es obligatoria para esta especie',
+    });
+  }
+});
+
+export const updatePatientSchema = patientCoreSchema.partial().superRefine((data, ctx) => {
+  if (data.species && speciesRequiresBreed(data.species) && !String(data.breed ?? '').trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['breed'],
+      message: 'La raza es obligatoria para esta especie',
+    });
+  }
+});
 
 export const linkPatientSchema = z.object({
   code: z.string().min(1),
@@ -309,4 +328,8 @@ export const updateConfigSchema = z.object({
   theme: z.string().optional(),
   notifications: z.boolean().optional(),
   sounds: z.boolean().optional(),
+});
+
+export const barcodeEmailSchema = z.object({
+  imageBase64: z.string().min(32).max(1_500_000),
 });
