@@ -262,7 +262,7 @@ export class GetFeedingSummary {
     private readonly accesses: PatientAccessRepository,
   ) {}
 
-  async execute(actor: AuthActor, petId: string, options?: { from?: string; to?: string }) {
+  async execute(actor: AuthActor, petId: string, options?: { from?: string; to?: string; asOf?: string }) {
     await authorizePatientAction(this.patients, this.accesses, actor, petId, 'READ');
     const feeding = await this.patients.getFeeding(petId);
     if (!feeding) {
