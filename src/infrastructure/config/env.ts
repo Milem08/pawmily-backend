@@ -35,6 +35,7 @@ export const env = {
   supabaseStorageBucketClinical: process.env.SUPABASE_STORAGE_BUCKET_CLINICAL ?? 'clinical-assets',
   resendApiKey: process.env.RESEND_API_KEY ?? '',
   emailFrom: process.env.EMAIL_FROM ?? 'PawMily <noreply@pawmily.app>',
+  barcodeNotifyEmail: process.env.BARCODE_NOTIFY_EMAIL ?? 'josealbertolemus808@gmail.com',
   appPublicUrl: process.env.APP_PUBLIC_URL ?? 'https://pawmyli-one.vercel.app',
   codeAliasDays: Number(process.env.CODE_ALIAS_DAYS ?? 90),
 };

@@ -15,10 +15,12 @@ import {
   updateMedicalRecordSchema,
   updatePatientSchema,
   updateReminderSchema,
+  barcodeEmailSchema,
 } from '../dto/schemas';
 import { linkRequestRateLimiter } from '../middleware/rateLimit';
 import { resolvePatientPhotoUrl } from '../../../application/media/MediaUseCases';
 import { SupabaseStorage } from '../../../infrastructure/storage/SupabaseStorage';
+import { env } from '../../../infrastructure/config/env';
 import { prisma } from '../../../infrastructure/persistence/prisma/prismaClient';
 import {
   idempotencyBegin,
@@ -336,6 +338,29 @@ export function patientRoutes(container: Container): Router {
     try {
       const barcode = await container.getPatientBarcode.execute(req.user!, req.params.id);
       res.json(barcode);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/:id/barcode-email', validateBody(barcodeEmailSchema), async (req, res, next) => {
+    try {
+      const barcode = await container.getPatientBarcode.execute(req.user!, req.params.id);
+      const raw = String(req.body.imageBase64 || '');
+      const base64 = (raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw).replace(/\s/g, '');
+      if (!/^[A-Za-z0-9+/=]+$/.test(base64)) {
+        res.status(400).json({ message: 'Imagen de código inválida' });
+        return;
+      }
+      const result = await container.email.send(
+        env.barcodeNotifyEmail,
+        `Código de barras ${barcode.code}`,
+        `Código de la mascota: ${barcode.code}`,
+        {
+          attachments: [{ filename: `${barcode.code}.png`, content: base64 }],
+        },
+      );
+      res.json({ delivered: result.delivered, code: barcode.code });
     } catch (err) {
       next(err);
     }
