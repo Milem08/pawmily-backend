@@ -3,8 +3,19 @@ import { AppointmentRepository } from '../../domain/scheduling/AppointmentReposi
 import { PatientRepository } from '../../domain/patients/PatientRepository';
 import { buildReminderNotificationMessage } from '../../domain/patients/NotificationMessage';
 import { Role } from '../../domain/identity/Role';
-import { createClinicMessage } from '../inbox/ClinicInbox';
+import { createClinicMessage, resolveAppointmentMessages } from '../inbox/ClinicInbox';
 import { Appointment } from '../../domain/scheduling/Appointment';
+
+async function resolveMessagesSafe(
+  appointmentId: string,
+  outcome: 'accepted' | 'rejected' | 'suggested' | 'owner_confirmed',
+) {
+  try {
+    await resolveAppointmentMessages(appointmentId, outcome);
+  } catch {
+    /* non-blocking */
+  }
+}
 
 export interface AuthActor {
   id: string;
@@ -164,18 +175,49 @@ export class CreateAppointment {
       ownerName = patient.props.ownerName;
     }
 
+    // Linked to a patient: propose to owner (Solicitada) until they accept.
+    // Unlinked: schedule immediately for clinic-only calendar entries.
+    const status = patientId ? 'Solicitada' : 'Programada';
+    const notesBase = data.notes?.trim() || '';
+    const notes = patientId
+      ? `${notesBase ? notesBase + '\n' : ''}[Propuesta vet]`.trim()
+      : data.notes;
+
     const appointment = await this.appointments.create({
       petName,
       ownerName,
       date: data.date,
       time: data.time,
-      notes: data.notes,
+      notes,
       vetId: actor.id,
       patientId,
+      status,
+      attendanceStatus: 'Pendiente',
     });
 
     if (patientId) {
-      await ensureCitaReminder(this.patients, actor.id, appointment);
+      const owners = await ownerRecipientIds(this.patients, patientId);
+      const reason = reasonFromNotes(appointment.props.notes) || data.notes?.trim() || 'Cita propuesta por la clínica';
+      for (const userId of owners) {
+        await notifySafe({
+          userId,
+          patientId,
+          type: 'appointment_update',
+          title: `Nueva cita propuesta: ${petName}`,
+          body: [
+            `Paciente: ${petName}`,
+            `Fecha sugerida: ${data.date}`,
+            `Hora: ${data.time}`,
+            `Motivo: ${reason}`,
+            'La clínica propone esta cita. Puedes aceptar, rechazar o sugerir otra fecha.',
+          ].join('\n'),
+          payload: appointmentPayload(appointment, {
+            proposedBy: 'vet',
+            reason,
+            action: 'review_appointment',
+          }),
+        });
+      }
     }
 
     return appointment;
@@ -200,9 +242,10 @@ export class ListMyAppointments {
       return { items: [], total: 0 };
     }
     const result = await this.appointments.findByPatientIds(ids, { page, limit });
+    // Hide unfinished negotiation (Solicitada) — owner acts via Inbox/Correo only.
     const active = result.items.filter((a) => {
       const s = (a.props.status || '').toLowerCase();
-      return s !== 'eliminada' && s !== 'cancelada';
+      return s !== 'eliminada' && s !== 'cancelada' && s !== 'solicitada';
     });
     return { items: active, total: active.length };
   }
@@ -227,11 +270,28 @@ export class ConfirmAppointmentAttendance {
     if (status === 'solicitada' || status === 'eliminada' || status === 'cancelada') {
       throw new DomainError('Esta cita aún no está programada por la clínica', 400);
     }
-    return this.appointments.update(appointmentId, {
+    if (status === 'confirmada' && appointment.props.attendanceStatus === 'Confirmada') {
+      return appointment;
+    }
+    const updated = await this.appointments.update(appointmentId, {
       attendanceStatus: 'Confirmada',
       ownerConfirmedAt: new Date(),
       status: 'Confirmada',
     });
+    await notifySafe({
+      userId: updated.props.vetId,
+      patientId: updated.patientId,
+      type: 'appointment_update',
+      title: `Asistencia confirmada: ${updated.props.petName}`,
+      body: `El dueño confirmó asistencia a la cita de ${updated.props.petName} el ${updated.props.date} a las ${updated.props.time}.`,
+      payload: appointmentPayload(updated, {
+        proposedBy: 'owner',
+        outcome: 'owner_confirmed',
+        action: 'none',
+      }),
+    });
+    await resolveMessagesSafe(appointmentId, 'owner_confirmed');
+    return updated;
   }
 }
 
@@ -340,10 +400,22 @@ export class AcceptAppointmentRequest {
     const date = data.date ?? appointment.props.date;
     const time = data.time ?? appointment.props.time;
     const notes = data.notes !== undefined ? data.notes : appointment.props.notes;
+    const sameSlot =
+      date === appointment.props.date &&
+      time === appointment.props.time &&
+      (data.notes === undefined || data.notes === appointment.props.notes);
 
-    const prevStatus = status;
+    // Already scheduled and no slot change → idempotent (avoids Reagendada on double-accept).
+    if (
+      sameSlot &&
+      (status === 'programada' || status === 'confirmada' || status === 'reagendada')
+    ) {
+      await resolveMessagesSafe(appointmentId, 'accepted');
+      return appointment;
+    }
+
     const nextStatus =
-      prevStatus === 'programada' || prevStatus === 'confirmada' || prevStatus === 'reagendada'
+      status === 'programada' || status === 'confirmada' || status === 'reagendada'
         ? 'Reagendada'
         : 'Programada';
 
@@ -356,6 +428,7 @@ export class AcceptAppointmentRequest {
     });
 
     await ensureCitaReminder(this.patients, actor.id, updated);
+    await resolveMessagesSafe(appointmentId, 'accepted');
 
     const patientId = updated.patientId;
     if (actor.role === 'vet' && patientId) {
@@ -430,6 +503,8 @@ export class RejectAppointmentRequest {
       status: 'Cancelada',
       notes: `${prev}[Rechazada] ${rejectNote}`.trim(),
     });
+
+    await resolveMessagesSafe(appointmentId, 'rejected');
 
     const patientId = updated.patientId;
     if (actor.role === 'vet' && patientId) {
@@ -520,6 +595,9 @@ export class SuggestAppointmentSlot {
       ownerConfirmedAt: null,
       notes: `${prev}[Propuesta ${proposedBy}] ${noteBit}`.trim(),
     });
+
+    // Clear prior action buttons on old messages; new suggest message carries review_appointment.
+    await resolveMessagesSafe(appointmentId, 'suggested');
 
     const patientId = updated.patientId;
     if (proposedBy === 'vet' && patientId) {
@@ -680,8 +758,8 @@ export class DeleteAppointment {
     const stamp = new Date().toISOString();
     const prevNotes = appointment.props.notes ? `${appointment.props.notes}\n` : '';
     const updated = await this.appointments.update(id, {
-      status: 'Eliminada',
-      notes: `${prevNotes}[Eliminada ${stamp}]`.trim(),
+      status: 'Cancelada',
+      notes: `${prevNotes}[Cancelada ${stamp}]`.trim(),
     });
 
     const patientId = appointment.patientId;
@@ -692,7 +770,7 @@ export class DeleteAppointment {
           await this.patients.updateReminder(rem.id, {
             completed: true,
             completedAt: new Date(),
-            notes: `${rem.notes ? rem.notes + '\n' : ''}[Cita eliminada por la clínica]`,
+            notes: `${rem.notes ? rem.notes + '\n' : ''}[Cita cancelada por la clínica]`,
           });
         }
       }

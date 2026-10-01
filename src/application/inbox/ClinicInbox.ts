@@ -135,3 +135,44 @@ export async function markAllClinicMessagesRead(userId: string): Promise<number>
   });
   return result.count;
 }
+
+/**
+ * Mark prior inbox rows for an appointment as resolved so Accept/Reject/Suggest
+ * buttons disappear on reload (original messages keep review_appointment otherwise).
+ */
+export async function resolveAppointmentMessages(
+  appointmentId: string,
+  outcome: 'accepted' | 'rejected' | 'suggested' | 'owner_confirmed',
+): Promise<number> {
+  const rows = await prisma.clinicMessage.findMany({
+    where: {
+      OR: [
+        { type: 'appointment_request' },
+        { type: 'appointment_update' },
+      ],
+    },
+    take: 500,
+    orderBy: { createdAt: 'desc' },
+  });
+  let updated = 0;
+  for (const row of rows) {
+    const payload =
+      row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)
+        ? ({ ...(row.payload as Record<string, unknown>) } as Record<string, unknown>)
+        : null;
+    if (!payload) continue;
+    if (String(payload.appointmentId || '') !== appointmentId) continue;
+    const action = String(payload.action || '');
+    if (action === 'none' && payload.outcome && String(payload.outcome) === outcome) {
+      continue;
+    }
+    payload.action = 'none';
+    payload.outcome = outcome;
+    await prisma.clinicMessage.update({
+      where: { id: row.id },
+      data: { payload: payload as object },
+    });
+    updated += 1;
+  }
+  return updated;
+}
