@@ -7,7 +7,10 @@ import {
   GenerateDiet,
   LinkPatientByCode,
 } from '../../../src/application/patients/PatientUseCases';
-import { CreateAppointment } from '../../../src/application/scheduling/AppointmentUseCases';
+import {
+  AcceptAppointmentRequest,
+  CreateAppointment,
+} from '../../../src/application/scheduling/AppointmentUseCases';
 import { Appointment } from '../../../src/domain/scheduling/Appointment';
 import { AppointmentRepository } from '../../../src/domain/scheduling/AppointmentRepository';
 import { AuditService } from '../../../src/infrastructure/audit/AuditService';
@@ -135,14 +138,14 @@ describe('patient feature use cases', () => {
     expect(feeding.formulaVersion).toBe('rer-mer-v1');
   });
 
-  it('creates appointment reminder of type cita when patientId is set', async () => {
+  it('does not create a cita reminder when the appointment is only requested', async () => {
     const patient = makePatient();
     const patients = makePatientRepo(patient);
     const appointments: AppointmentRepository = {
       create: jest.fn(async (data) =>
         new Appointment({
           id: 'a1',
-          status: 'Programada',
+          status: 'Solicitada',
           ...data,
         }),
       ),
@@ -165,6 +168,41 @@ describe('patient feature use cases', () => {
         patientId: 'p1',
       },
     );
+
+    expect(patients.addReminder).not.toHaveBeenCalled();
+  });
+
+  it('creates a cita reminder when the appointment is accepted', async () => {
+    const patient = makePatient();
+    const patients = makePatientRepo(patient);
+    const pending = new Appointment({
+      id: 'a1',
+      petName: 'X',
+      ownerName: 'Y',
+      date: '2026-08-01',
+      time: '10:00',
+      status: 'Solicitada',
+      vetId: 'vet1',
+      patientId: 'p1',
+    });
+    const appointments: AppointmentRepository = {
+      create: jest.fn(),
+      findById: jest.fn(async () => pending),
+      findByVet: jest.fn(),
+      findByPatientIds: jest.fn(),
+      findByMonth: jest.fn(),
+      update: jest.fn(async (_id, data) =>
+        new Appointment({
+          ...pending.props,
+          ...data,
+          id: pending.id,
+        }),
+      ),
+      delete: jest.fn(),
+    };
+
+    const uc = new AcceptAppointmentRequest(appointments, patients);
+    await uc.execute({ id: 'vet1', role: 'vet' }, 'a1');
 
     expect(patients.addReminder).toHaveBeenCalledWith(
       'p1',

@@ -12,7 +12,7 @@ import {
   passwordResetConfirmSchema,
   emailVerifyConfirmSchema,
 } from '../dto/schemas';
-import { authRateLimiter } from '../middleware/rateLimit';
+import { authRateLimiter, refreshRateLimiter } from '../middleware/rateLimit';
 
 export function authRoutes(container: Container): Router {
   const router = Router();
@@ -47,7 +47,7 @@ export function authRoutes(container: Container): Router {
     }
   });
 
-  router.post('/refresh', authRateLimiter, validateBody(refreshSchema), async (req, res, next) => {
+  router.post('/refresh', refreshRateLimiter, validateBody(refreshSchema), async (req, res, next) => {
     try {
       const result = await container.refreshSession.execute(req.body.refreshToken, {
         userAgent: req.get('user-agent') || undefined,

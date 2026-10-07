@@ -100,7 +100,10 @@ export async function listClinicMessagesForUser(
   userId: string,
   opts: { limit?: number; unreadOnly?: boolean } = {},
 ): Promise<ClinicMessageDto[]> {
-  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 100);
+  const requested = opts.limit;
+  const limit = Number.isFinite(requested)
+    ? Math.min(Math.max(Math.floor(requested as number), 1), 100)
+    : 50;
   const rows = await prisma.clinicMessage.findMany({
     where: {
       userId,

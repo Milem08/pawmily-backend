@@ -53,11 +53,12 @@ export class RegisterUser {
       }
     }
 
-    let role: Role = 'vet';
-    if (input.role && isRole(input.role)) {
+    let role: Role = 'owner';
+    if (input.role) {
+      if (!isRole(input.role)) {
+        throw new DomainError('Rol inválido', 400);
+      }
       role = input.role;
-    } else if (input.phone && !input.email) {
-      role = 'owner';
     }
 
     const hashed = await this.hasher.hash(input.password);

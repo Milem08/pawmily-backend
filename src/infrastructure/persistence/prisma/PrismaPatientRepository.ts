@@ -233,15 +233,17 @@ export class PrismaPatientRepository implements PatientRepository {
   }
 
   async delete(id: string): Promise<void> {
-    await prisma.linkRequest.deleteMany({ where: { patientId: id } });
-    await prisma.patientAccess.deleteMany({ where: { patientId: id } });
-    await prisma.mediaAsset.deleteMany({ where: { patientId: id } });
-    await prisma.auditLog.updateMany({ where: { patientId: id }, data: { patientId: null } });
-    await prisma.reminder.deleteMany({ where: { petId: id } });
-    await prisma.medicalRecord.deleteMany({ where: { petId: id } });
-    await prisma.feeding.deleteMany({ where: { petId: id } });
-    await prisma.appointment.updateMany({ where: { patientId: id }, data: { patientId: null } });
-    await prisma.patient.delete({ where: { id } });
+    await prisma.$transaction(async (tx) => {
+      await tx.linkRequest.deleteMany({ where: { patientId: id } });
+      await tx.patientAccess.deleteMany({ where: { patientId: id } });
+      await tx.mediaAsset.deleteMany({ where: { patientId: id } });
+      await tx.auditLog.updateMany({ where: { patientId: id }, data: { patientId: null } });
+      await tx.reminder.deleteMany({ where: { petId: id } });
+      await tx.medicalRecord.deleteMany({ where: { petId: id } });
+      await tx.feeding.deleteMany({ where: { petId: id } });
+      await tx.appointment.updateMany({ where: { patientId: id }, data: { patientId: null } });
+      await tx.patient.delete({ where: { id } });
+    });
   }
 
   async addMedicalRecord(petId: string, data: CreateMedicalRecordData) {

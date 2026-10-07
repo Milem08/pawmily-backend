@@ -20,8 +20,10 @@ import {
 import { linkRequestRateLimiter } from '../middleware/rateLimit';
 import { resolvePatientPhotoUrl } from '../../../application/media/MediaUseCases';
 import { SupabaseStorage } from '../../../infrastructure/storage/SupabaseStorage';
-import { env } from '../../../infrastructure/config/env';
 import { prisma } from '../../../infrastructure/persistence/prisma/prismaClient';
+import { DomainError } from '../../../domain/shared/DomainError';
+import { toOwnerConsultationView } from '../../../domain/patients/ConsultationTypes';
+import { parseLimit, parsePage } from '../queryPaging';
 import {
   idempotencyBegin,
   idempotencyComplete,
@@ -48,12 +50,31 @@ function displayableEmbeddedPhoto(photo: string | null): string | null {
   return photo;
 }
 
+function clinicalPropsForViewer(
+  props: Record<string, unknown>,
+  viewer: { id: string; role: string },
+): Record<string, unknown> {
+  const records = props.medicalRecords;
+  const isPatientVet = viewer.role === 'vet' && props.vetId === viewer.id;
+  if (isPatientVet || !Array.isArray(records)) return props;
+  return {
+    ...props,
+    medicalRecords: records.map((record) =>
+      toOwnerConsultationView(
+        record && typeof record === 'object' ? (record as Record<string, unknown>) : {},
+      ),
+    ),
+  };
+}
+
 /** Resolve asset: refs to signed URLs; keep data:/https: as-is. Never persist signed URLs. */
 async function toClientPatient(
   props: Record<string, unknown>,
   storage: SupabaseStorage,
+  viewer: { id: string; role: string },
   options: ClientPatientOptions = {},
 ) {
+  props = clinicalPropsForViewer(props, viewer);
   const rawPhoto = (props.photo as string | null | undefined) ?? null;
   const photoAssetId = (props.photoAssetId as string | null | undefined) ?? null;
   let photo: string | null = null;
@@ -106,6 +127,7 @@ async function toClientPatient(
 async function toClientPatientList(
   items: Array<{ props: Record<string, unknown> }>,
   storage: SupabaseStorage,
+  viewer: { id: string; role: string },
 ) {
   const idsNeedingPending = items
     .map((p) => p.props)
@@ -135,7 +157,7 @@ async function toClientPatientList(
         : id && pendingSet.has(id)
           ? 'PENDING'
           : 'UNLINKED';
-      return toClientPatient(props, storage, { lean: true, linkStatus });
+      return toClientPatient(props, storage, viewer, { lean: true, linkStatus });
     }),
   );
 }
@@ -176,6 +198,7 @@ export function patientRoutes(container: Container): Router {
       const body = await toClientPatient(
         patient.props as unknown as Record<string, unknown>,
         storage,
+        req.user!,
       );
       if (idemKey) idempotencyComplete(idemKey, 201, body);
       res.status(201).json(body);
@@ -196,8 +219,8 @@ export function patientRoutes(container: Container): Router {
 
   router.get('/', async (req, res, next) => {
     try {
-      const page = Number(req.query.page ?? 1);
-      const limit = Number(req.query.limit ?? 20);
+      const page = parsePage(req.query.page);
+      const limit = parseLimit(req.query.limit, 20);
       const search = typeof req.query.search === 'string' ? req.query.search : undefined;
       const result = await container.listPatients.execute(req.user!, { search, page, limit });
       res.json({
@@ -206,6 +229,7 @@ export function patientRoutes(container: Container): Router {
             props: p.props as unknown as Record<string, unknown>,
           })),
           storage,
+          req.user!,
         ),
         meta: { page, limit, total: result.total },
       });
@@ -216,8 +240,8 @@ export function patientRoutes(container: Container): Router {
 
   router.get('/mine', async (req, res, next) => {
     try {
-      const page = Number(req.query.page ?? 1);
-      const limit = Number(req.query.limit ?? 20);
+      const page = parsePage(req.query.page);
+      const limit = parseLimit(req.query.limit, 20);
       const result = await container.listMyPatients.execute(req.user!, { page, limit });
       res.json({
         data: await toClientPatientList(
@@ -225,6 +249,7 @@ export function patientRoutes(container: Container): Router {
             props: p.props as unknown as Record<string, unknown>,
           })),
           storage,
+          req.user!,
         ),
         meta: { page, limit, total: result.total },
       });
@@ -287,7 +312,7 @@ export function patientRoutes(container: Container): Router {
   router.post('/link', validateBody(linkPatientSchema), async (req, res, next) => {
     try {
       const patient = await container.linkPatientByCode.execute(req.user!, req.body.code);
-      res.json(await toClientPatient(patient.props as unknown as Record<string, unknown>, storage));
+      res.json(await toClientPatient(patient.props as unknown as Record<string, unknown>, storage, req.user!));
     } catch (err) {
       next(err);
     }
@@ -296,7 +321,7 @@ export function patientRoutes(container: Container): Router {
   router.get('/code/:code', async (req, res, next) => {
     try {
       const patient = await container.getPatientByCode.execute(req.user!, req.params.code);
-      res.json(await toClientPatient(patient.props as unknown as Record<string, unknown>, storage));
+      res.json(await toClientPatient(patient.props as unknown as Record<string, unknown>, storage, req.user!));
     } catch (err) {
       next(err);
     }
@@ -305,7 +330,7 @@ export function patientRoutes(container: Container): Router {
   router.delete('/:id/link', async (req, res, next) => {
     try {
       const patient = await container.unlinkPatient.execute(req.user!, req.params.id);
-      res.json(await toClientPatient(patient.props as unknown as Record<string, unknown>, storage));
+      res.json(await toClientPatient(patient.props as unknown as Record<string, unknown>, storage, req.user!));
     } catch (err) {
       next(err);
     }
@@ -345,6 +370,17 @@ export function patientRoutes(container: Container): Router {
 
   router.post('/:id/barcode-email', validateBody(barcodeEmailSchema), async (req, res, next) => {
     try {
+      const patient = await container.patients.findById(req.params.id);
+      if (!patient) {
+        throw new DomainError('Paciente no encontrado', 404);
+      }
+      if (req.user!.role !== 'vet' || !patient.belongsToVet(req.user!.id)) {
+        throw new DomainError('No autorizado', 403);
+      }
+      const notifyTo = (process.env.BARCODE_NOTIFY_EMAIL || '').trim();
+      if (!notifyTo) {
+        throw new DomainError('Correo de impresión no configurado', 503);
+      }
       const barcode = await container.getPatientBarcode.execute(req.user!, req.params.id);
       const raw = String(req.body.imageBase64 || '');
       const base64 = (raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw).replace(/\s/g, '');
@@ -353,7 +389,7 @@ export function patientRoutes(container: Container): Router {
         return;
       }
       const result = await container.email.send(
-        env.barcodeNotifyEmail,
+        notifyTo,
         `Código de barras ${barcode.code}`,
         `Código de la mascota: ${barcode.code}`,
         {
@@ -369,7 +405,7 @@ export function patientRoutes(container: Container): Router {
   router.get('/:id', async (req, res, next) => {
     try {
       const patient = await container.getPatient.execute(req.user!, req.params.id);
-      res.json(await toClientPatient(patient.props as unknown as Record<string, unknown>, storage));
+      res.json(await toClientPatient(patient.props as unknown as Record<string, unknown>, storage, req.user!));
     } catch (err) {
       next(err);
     }
@@ -378,7 +414,7 @@ export function patientRoutes(container: Container): Router {
   router.put('/:id', validateBody(updatePatientSchema), async (req, res, next) => {
     try {
       const patient = await container.updatePatient.execute(req.user!, req.params.id, req.body);
-      res.json(await toClientPatient(patient.props as unknown as Record<string, unknown>, storage));
+      res.json(await toClientPatient(patient.props as unknown as Record<string, unknown>, storage, req.user!));
     } catch (err) {
       next(err);
     }

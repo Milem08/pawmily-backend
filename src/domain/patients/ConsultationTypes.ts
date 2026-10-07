@@ -24,7 +24,7 @@ export function ownerVisibleFields(type: ConsultationType): string[] {
   const common = ['id', 'consultationNumber', 'type', 'date', 'time', 'vetName', 'status'];
   switch (type) {
     case 'GENERAL':
-      return [...common, 'reason', 'diagnosis', 'observations', 'treatment'];
+      return [...common, 'reason', 'diagnosis', 'observations', 'treatment', 'medication'];
     case 'PREVENTIVA':
       return [...common, 'weightAtVisit', 'observations', 'followUpDate', 'typePayload'];
     case 'VACUNACION':

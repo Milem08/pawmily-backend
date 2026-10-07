@@ -979,7 +979,7 @@ Un diagrama entidad-relación formal puede generarse a partir del esquema Prisma
 |----------|------------|
 | API producción | `https://api-production-66b1.up.railway.app/api` |
 | Web | Proyecto Vercel tipo `pawmyli` / `pawmyli-one.vercel.app` |
-| Base de datos | Supabase Postgres (proyecto `ghkrlpebwqqdynqmmsbv`) |
+| Base de datos | Supabase Postgres (proyecto `your-project-ref`) |
 | Android | Desarrollo contra emulador local |
 
 ---

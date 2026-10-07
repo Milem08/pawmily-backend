@@ -35,4 +35,14 @@ describe('ConsultationTypes', () => {
     expect(owner.diagnosis).toBe('OK');
     expect(owner.reason).toBe('Chequeo');
   });
+
+  it('includes medication on a GENERAL owner view', () => {
+    const owner = toOwnerConsultationView({
+      type: 'GENERAL',
+      medication: 'Amoxicilina',
+      privateNotes: 'secreto',
+    });
+    expect(owner.medication).toBe('Amoxicilina');
+    expect(owner.privateNotes).toBeUndefined();
+  });
 });

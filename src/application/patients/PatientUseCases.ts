@@ -215,7 +215,7 @@ export class GetPatientByCode {
     }
     const ctx = await resolvePatientAccess(this.patients, this.accesses, actor, patient.id);
     if (!ctx.petRole) {
-      throw new DomainError('No autorizado', 403);
+      throw new DomainError('Paciente no encontrado con ese código', 404);
     }
     return new Patient({
       ...patient.props,

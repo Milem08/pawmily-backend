@@ -21,16 +21,32 @@ export class RefreshTokenStore {
 
   async rotate(rawToken: string, meta?: { userAgent?: string; ip?: string }) {
     const tokenHash = hashToken(rawToken);
-    const existing = await prisma.refreshToken.findUnique({ where: { tokenHash } });
-    if (!existing || existing.revokedAt || existing.expiresAt < new Date()) {
-      return null;
-    }
-    await prisma.refreshToken.update({
-      where: { id: existing.id },
-      data: { revokedAt: new Date() },
+    const raw = generateOpaqueToken(48);
+    const nextHash = hashToken(raw);
+    const expiresAt = new Date(Date.now() + env.jwtRefreshDays * 24 * 60 * 60 * 1000);
+
+    const rotated = await prisma.$transaction(async (tx) => {
+      const consumed = await tx.refreshToken.updateMany({
+        where: { tokenHash, revokedAt: null, expiresAt: { gt: new Date() } },
+        data: { revokedAt: new Date() },
+      });
+      if (consumed.count !== 1) return null;
+      const existing = await tx.refreshToken.findUnique({ where: { tokenHash } });
+      if (!existing) return null;
+      await tx.refreshToken.create({
+        data: {
+          userId: existing.userId,
+          tokenHash: nextHash,
+          expiresAt,
+          userAgent: meta?.userAgent ?? null,
+          ip: meta?.ip ?? null,
+        },
+      });
+      return { userId: existing.userId };
     });
-    const next = await this.issue(existing.userId, meta);
-    return { userId: existing.userId, ...next };
+
+    if (!rotated) return null;
+    return { userId: rotated.userId, refreshToken: raw, expiresAt };
   }
 
   async revoke(rawToken: string): Promise<boolean> {

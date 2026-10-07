@@ -142,6 +142,36 @@ export class PrismaLinkRequestRepository implements LinkRequestRepository {
     } | null;
   }): Promise<LinkRequestRecord> {
     return prisma.$transaction(async (tx) => {
+      if (data.claimOwner) {
+        const claimed = await tx.patient.updateMany({
+          where: {
+            id: data.patientId,
+            OR: [{ ownerUserId: null }, { ownerUserId: data.userId }],
+          },
+          data: {
+            ownerUserId: data.userId,
+            ownerName: data.claimOwner.ownerName,
+            ownerPhone: data.claimOwner.ownerPhone ?? null,
+            ownerEmail: data.claimOwner.ownerEmail ?? null,
+          },
+        });
+        if (claimed.count !== 1) {
+          throw new Error('ALREADY_HAS_OWNER');
+        }
+        const otherOwner = await tx.patientAccess.findFirst({
+          where: {
+            patientId: data.patientId,
+            role: 'OWNER',
+            status: 'ACTIVE',
+            revokedAt: null,
+            userId: { not: data.userId },
+          },
+        });
+        if (otherOwner) {
+          throw new Error('ALREADY_HAS_OWNER');
+        }
+      }
+
       await tx.patientAccess.upsert({
         where: {
           userId_patientId: { userId: data.userId, patientId: data.patientId },
@@ -160,18 +190,6 @@ export class PrismaLinkRequestRepository implements LinkRequestRepository {
           grantedBy: data.decidedBy,
         },
       });
-
-      if (data.claimOwner) {
-        await tx.patient.update({
-          where: { id: data.patientId },
-          data: {
-            ownerUserId: data.userId,
-            ownerName: data.claimOwner.ownerName,
-            ownerPhone: data.claimOwner.ownerPhone ?? null,
-            ownerEmail: data.claimOwner.ownerEmail ?? null,
-          },
-        });
-      }
 
       const decided = await tx.linkRequest.updateMany({
         where: { id: data.requestId, status: 'PENDING' },

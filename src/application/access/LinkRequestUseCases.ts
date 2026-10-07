@@ -229,6 +229,9 @@ export class ApproveLinkRequest {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
+      if (msg === 'ALREADY_HAS_OWNER') {
+        throw new DomainError('La mascota ya tiene dueño', 409);
+      }
       if (msg === 'LINK_REQUEST_NOT_PENDING') {
         // Concurrent approve won the race — treat as success if now APPROVED
         const current = await this.links.findById(requestId);

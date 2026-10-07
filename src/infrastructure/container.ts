@@ -129,7 +129,7 @@ export function createContainer() {
     requestEmailVerification,
     confirmEmailVerification: new ConfirmEmailVerification(audit),
     getProfile: new GetProfile(users, storage),
-    updateProfile: new UpdateProfile(users, hasher),
+    updateProfile: new UpdateProfile(users, hasher, refreshStore),
     syncFeedingReminders,
     createPatient,
     migrateAllPatientCodes: new MigrateAllPatientCodes(patients, audit),

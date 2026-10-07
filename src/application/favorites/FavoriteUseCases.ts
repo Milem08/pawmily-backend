@@ -4,6 +4,49 @@ import { prisma } from '../../infrastructure/persistence/prisma/prismaClient';
 
 const MAX_FAVORITES = 3;
 
+async function userCanAccessPatient(
+  actor: AuthActor,
+  patient: { id: string; vetId: string; ownerUserId: string | null },
+): Promise<boolean> {
+  if (actor.role === 'vet' && patient.vetId === actor.id) return true;
+  if (actor.role === 'owner' && patient.ownerUserId === actor.id) return true;
+  const grant = await prisma.patientAccess.findFirst({
+    where: {
+      userId: actor.id,
+      patientId: patient.id,
+      status: 'ACTIVE',
+      revokedAt: null,
+    },
+    select: { id: true },
+  });
+  return Boolean(grant);
+}
+
+async function assertFavoriteTarget(
+  actor: AuthActor,
+  input: { targetType: 'REMINDER' | 'APPOINTMENT'; targetId: string },
+): Promise<void> {
+  if (input.targetType === 'REMINDER') {
+    const rem = await prisma.reminder.findUnique({
+      where: { id: input.targetId },
+      include: { pet: { select: { id: true, vetId: true, ownerUserId: true } } },
+    });
+    if (!rem || !(await userCanAccessPatient(actor, rem.pet))) {
+      throw new DomainError('Recordatorio no encontrado', 404);
+    }
+    return;
+  }
+  const appt = await prisma.appointment.findUnique({
+    where: { id: input.targetId },
+    include: { patient: { select: { id: true, vetId: true, ownerUserId: true } } },
+  });
+  if (!appt) throw new DomainError('Cita no encontrada', 404);
+  const allowed = appt.patient
+    ? await userCanAccessPatient(actor, appt.patient)
+    : actor.role === 'vet' && appt.vetId === actor.id;
+  if (!allowed) throw new DomainError('Cita no encontrada', 404);
+}
+
 export class ListFavorites {
   async execute(actor: AuthActor) {
     return prisma.userFavorite.findMany({
@@ -18,6 +61,8 @@ export class AddFavorite {
     actor: AuthActor,
     input: { targetType: 'REMINDER' | 'APPOINTMENT'; targetId: string },
   ) {
+    await assertFavoriteTarget(actor, input);
+
     const count = await prisma.userFavorite.count({ where: { userId: actor.id } });
     if (count >= MAX_FAVORITES) {
       throw new DomainError('Ya alcanzaste el máximo de 3 favoritos', 409);
@@ -32,14 +77,6 @@ export class AddFavorite {
       },
     });
     if (existing) return existing;
-
-    if (input.targetType === 'REMINDER') {
-      const rem = await prisma.reminder.findUnique({ where: { id: input.targetId } });
-      if (!rem) throw new DomainError('Recordatorio no encontrado', 404);
-    } else {
-      const appt = await prisma.appointment.findUnique({ where: { id: input.targetId } });
-      if (!appt) throw new DomainError('Cita no encontrada', 404);
-    }
 
     return prisma.userFavorite.create({
       data: {

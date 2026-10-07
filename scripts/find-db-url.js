@@ -15,7 +15,7 @@ function extractPassword(url) {
 }
 
 const password = extractPassword(process.env.DATABASE_URL || '');
-const ref = 'ghkrlpebwqqdynqmmsbv';
+const ref = 'your-project-ref';
 const encoded = encodeURIComponent(password);
 
 const candidates = [

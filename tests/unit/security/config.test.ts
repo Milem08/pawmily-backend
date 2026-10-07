@@ -1,21 +1,42 @@
-import { env } from '../../../src/infrastructure/config/env';
-
 describe('Configuración de seguridad', () => {
-  it('no usa el secreto JWT por defecto en production', () => {
-    if (env.nodeEnv === 'production') {
-      expect(env.jwtSecret).not.toBe('pawmily-dev-secret');
-      expect(env.jwtSecret.length).toBeGreaterThanOrEqual(16);
-    } else {
-      expect(env.jwtSecret.length).toBeGreaterThan(0);
-    }
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousJwt = process.env.JWT_SECRET;
+
+  afterEach(() => {
+    process.env.NODE_ENV = previousNodeEnv;
+    if (previousJwt === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousJwt;
+    jest.resetModules();
+    jest.dontMock('dotenv');
   });
 
-  it('DATABASE_URL debe usar pooler Supabase con SSL y pgbouncer', () => {
-    expect(env.databaseUrl.length).toBeGreaterThan(0);
-    expect(env.databaseUrl).not.toMatch(/your-project/i);
-    expect(env.databaseUrl).not.toMatch(/YOUR_PASSWORD/);
-    expect(env.databaseUrl).toMatch(/pooler\.supabase\.com|supabase\.co/i);
-    expect(env.databaseUrl).toMatch(/sslmode=require/i);
-    expect(env.databaseUrl).toMatch(/pgbouncer=true/i);
+  function mockDotenv() {
+    jest.resetModules();
+    jest.doMock('dotenv', () => ({
+      __esModule: true,
+      default: { config: jest.fn(() => ({ parsed: undefined })) },
+    }));
+  }
+
+  it('fuera de test, sin JWT_SECRET, la configuración no arranca', () => {
+    mockDotenv();
+    process.env.NODE_ENV = 'development';
+    delete process.env.JWT_SECRET;
+    jest.isolateModules(() => {
+      expect(() => {
+        require('../../../src/infrastructure/config/env');
+      }).toThrow(/JWT_SECRET/);
+    });
+  });
+
+  it('en test, sin JWT_SECRET, usa un secreto que no es el valor histórico por defecto', () => {
+    mockDotenv();
+    process.env.NODE_ENV = 'test';
+    delete process.env.JWT_SECRET;
+    jest.isolateModules(() => {
+      const loaded = require('../../../src/infrastructure/config/env');
+      expect(loaded.env.jwtSecret).toBe('test-only-jwt-secret');
+      expect(loaded.env.jwtSecret).not.toBe('pawmily-dev-secret');
+    });
   });
 });

@@ -11,6 +11,7 @@ import {
   suggestAppointmentSchema,
   updateAppointmentSchema,
 } from '../dto/schemas';
+import { parseLimit, parsePage } from '../queryPaging';
 
 export function appointmentRoutes(container: Container): Router {
   const router = Router();
@@ -37,8 +38,8 @@ export function appointmentRoutes(container: Container): Router {
 
   router.get('/mine', async (req, res, next) => {
     try {
-      const page = Number(req.query.page ?? 1);
-      const limit = Number(req.query.limit ?? 20);
+      const page = parsePage(req.query.page);
+      const limit = parseLimit(req.query.limit, 20);
       const result = await container.listMyAppointments.execute(req.user!, { page, limit });
       res.json({
         data: result.items.map((a) => a.props),
@@ -115,8 +116,8 @@ export function appointmentRoutes(container: Container): Router {
 
   router.get('/', async (req, res, next) => {
     try {
-      const page = Number(req.query.page ?? 1);
-      const limit = Number(req.query.limit ?? 20);
+      const page = parsePage(req.query.page);
+      const limit = parseLimit(req.query.limit, 20);
       const date = typeof req.query.date === 'string' ? req.query.date : undefined;
       const result = await container.listAppointments.execute(req.user!, { date, page, limit });
       res.json({

@@ -36,6 +36,7 @@ export const updateProfileSchema = z.object({
   license: z.string().optional(),
   photo: z.string().optional(),
   password: z.string().min(6).optional(),
+  currentPassword: z.string().min(1).optional(),
 });
 
 const feedingMealSchema = z.object({

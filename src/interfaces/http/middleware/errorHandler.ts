@@ -11,6 +11,13 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
 
   const anyErr = err as { name?: string; message?: string; code?: string; status?: number; statusCode?: number; type?: string };
 
+  if (anyErr?.type === 'entity.too.large' || anyErr?.status === 413 || anyErr?.statusCode === 413) {
+    return res.status(413).json({
+      error: 'PAYLOAD_TOO_LARGE',
+      message: 'El cuerpo de la petición supera el tamaño permitido (2 MB)',
+    });
+  }
+
   if (anyErr?.type === 'entity.parse.failed' || anyErr?.status === 400 || anyErr?.statusCode === 400) {
     return res.status(400).json({
       error: 'VALIDATION_ERROR',

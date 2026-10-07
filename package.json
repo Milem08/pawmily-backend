@@ -9,6 +9,7 @@
     "start": "node dist/server.js",
     "test": "jest --runInBand",
     "test:unit": "jest --runInBand tests/unit",
+    "test:integration": "jest --runInBand tests/integration",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "prisma:migrate": "prisma migrate dev"
