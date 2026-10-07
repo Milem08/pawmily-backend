@@ -7,8 +7,72 @@ import { prisma } from '../../infrastructure/persistence/prisma/prismaClient';
 type LogStatus = 'EATEN' | 'PENDING' | 'UNLOGGED' | 'PARTIAL';
 type LogReason = 'NORMAL' | 'LESS' | 'REFUSED' | 'SKIPPED' | 'OTHER';
 
+function zonedNow(timeZone = process.env.APP_TZ || 'America/Mexico_City') {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date());
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || '00';
+  return {
+    iso: `${get('year')}-${get('month')}-${get('day')}`,
+    minutes: Number(get('hour')) * 60 + Number(get('minute')),
+  };
+}
+
 function isoToday(): string {
-  return new Date().toISOString().slice(0, 10);
+  return zonedNow().iso;
+}
+
+function parseMealHourMinute(raw?: string | null): { h: number; m: number } | null {
+  if (!raw) return null;
+  const cleaned = raw
+    .trim()
+    .replace(/\u00a0/g, ' ')
+    .replace(/\./g, ' ')
+    .toLowerCase()
+    .replace(/hrs|horas/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const withMarker = cleaned.match(
+    /^(\d{1,2})\s*[:h]\s*(\d{2})(?::\s*\d{2})?\s*(a\s*m|p\s*m|am|pm)$/,
+  );
+  if (withMarker) {
+    let h = Number(withMarker[1]);
+    const m = Number(withMarker[2]);
+    if (!Number.isFinite(h) || !Number.isFinite(m) || m < 0 || m > 59 || h < 1 || h > 12) {
+      return null;
+    }
+    const pm = withMarker[3].includes('p');
+    if (pm && h < 12) h += 12;
+    if (!pm && h === 12) h = 0;
+    return { h, m };
+  }
+  const twentyFour = cleaned.match(/^(\d{1,2})\s*[:h]\s*(\d{2})(?::\s*\d{2})?$/);
+  if (!twentyFour) return null;
+  const h = Number(twentyFour[1]);
+  const m = Number(twentyFour[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) {
+    return null;
+  }
+  return { h, m };
+}
+
+function mealDueOnDay(
+  mealTime: string | undefined,
+  day: string,
+  today: string,
+  nowMinutes: number,
+): boolean {
+  if (day < today) return true;
+  if (day > today) return false;
+  const hm = parseMealHourMinute(mealTime);
+  if (!hm) return true;
+  return nowMinutes > hm.h * 60 + hm.m;
 }
 
 function addDaysIso(iso: string, delta: number): string {
@@ -262,7 +326,11 @@ export class GetFeedingSummary {
     private readonly accesses: PatientAccessRepository,
   ) {}
 
-  async execute(actor: AuthActor, petId: string, options?: { from?: string; to?: string; asOf?: string }) {
+  async execute(
+    actor: AuthActor,
+    petId: string,
+    options?: { from?: string; to?: string; asOf?: string },
+  ) {
     await authorizePatientAction(this.patients, this.accesses, actor, petId, 'READ');
     const feeding = await this.patients.getFeeding(petId);
     if (!feeding) {
@@ -286,7 +354,9 @@ export class GetFeedingSummary {
     });
 
     const byKey = new Map(logs.map((l) => [`${l.mealId}|${l.scheduledDate}`, l]));
-    const today = isoToday();
+    const today =
+      options?.asOf && /^\d{4}-\d{2}-\d{2}$/.test(options.asOf) ? options.asOf : isoToday();
+    const nowMinutes = zonedNow().minutes;
 
     let eaten = 0;
     let partial = 0;
@@ -294,10 +364,11 @@ export class GetFeedingSummary {
     let pending = 0;
     let scheduled = 0;
 
-    // Only count meals due so far (through today). Future slots must not dilute % .
+    // Only count meals already due (past days + today's plates whose time passed).
     const endForCompliance = to < today ? to : today;
     for (const day of enumerateDays(from, endForCompliance)) {
       for (const meal of meals) {
+        if (!mealDueOnDay(meal.time, day, today, nowMinutes)) continue;
         scheduled += 1;
         const log = byKey.get(`${meal.id}|${day}`);
         const status = log?.status || (day < today ? 'UNLOGGED' : 'PENDING');
@@ -309,7 +380,8 @@ export class GetFeedingSummary {
     }
 
     const done = eaten + partial;
-    const percent = scheduled > 0 ? Math.round((done / scheduled) * 100) : 0;
+    const percent =
+      scheduled > 0 ? Math.round((done / scheduled) * 100) : meals.length ? 100 : 0;
 
     const weekMeals = meals.map((meal) => ({
       id: meal.id,
