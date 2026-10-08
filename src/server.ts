@@ -1,3 +1,4 @@
+import { planFeedingClose } from './application/feeding/feedingSchedule';
 import { createApp } from './interfaces/http/createApp';
 import { env } from './infrastructure/config/env';
 import { createContainer } from './infrastructure/container';
@@ -10,19 +11,22 @@ app.listen(env.port, () => {
   startMidnightFeedingCloser();
 });
 
-/** Runs close-unlogged once per local calendar day after midnight. */
+/** Closes elapsed El Salvador days. A restart still closes days missed at midnight. */
 function startMidnightFeedingCloser() {
-  let lastRunDay = '';
+  let closedThrough: string | null = null;
   const tick = async () => {
-    const now = new Date();
-    const dayKey = now.toISOString().slice(0, 10);
-    if (now.getHours() !== 0 || lastRunDay === dayKey) return;
-    lastRunDay = dayKey;
+    const plan = planFeedingClose(new Date(), closedThrough);
+    if (!plan.dates.length) return;
     try {
-      const result = await container.closeUnloggedFeedingLogs.execute();
-      console.log(
-        `[feeding] closed unlogged meals for ${result.date}: ${result.closed}`,
-      );
+      let closed = 0;
+      let lastDate = plan.dates[plan.dates.length - 1];
+      for (const day of plan.dates) {
+        const result = await container.closeUnloggedFeedingLogs.execute(day);
+        closed += result.closed;
+        lastDate = result.date;
+      }
+      closedThrough = plan.closedThrough;
+      console.log(`[feeding] closed unlogged meals through ${lastDate}: ${closed}`);
     } catch (err) {
       console.error('[feeding] close-unlogged failed', err);
     }

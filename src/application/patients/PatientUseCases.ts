@@ -13,7 +13,7 @@ import { buildReminderNotificationMessage } from '../../domain/patients/Notifica
 import { visibleRemindersForActor } from '../../domain/patients/ReminderVisibility';
 import { resolveStoredVetNames } from './resolveStoredVetName';
 import { UserRepository } from '../../domain/identity/UserRepository';
-import { businessNow } from '../../shared/businessTime';
+import { businessNow, todayInBusinessZone } from '../../shared/businessTime';
 import { PatientAccessRepository } from '../../domain/access/PatientAccessRepository';
 import {
   authorizePatientAction,
@@ -550,7 +550,7 @@ export class GenerateDiet {
     });
 
     const existing = await this.patients.getFeeding(petId);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayInBusinessZone();
 
     return this.patients.upsertFeeding(petId, {
       recommendedAmount: diet.recommendedAmount,
@@ -591,7 +591,7 @@ export class UpdateFeeding {
   async execute(actor: AuthActor, petId: string, data: UpsertFeedingData) {
     await authorizePatientAction(this.patients, this.accesses, actor, petId, 'WRITE_FEEDING');
     const existing = await this.patients.getFeeding(petId);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayInBusinessZone();
     const feeding = await this.patients.upsertFeeding(petId, {
       ...data,
       startDate: data.startDate ?? existing?.startDate ?? today,

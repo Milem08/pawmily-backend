@@ -284,14 +284,16 @@ model Feeding {
 }
 
 model FeedingMeal {
-  id        String @id @default(cuid())
-  feedingId String
-  label     String
-  time      String
-  amount    String?
-  food      String?
-  notes     String?
-  sortOrder Int    @default(0)
+  id         String    @id @default(cuid())
+  feedingId  String
+  label      String
+  time       String
+  amount     String?
+  food       String?
+  notes      String?
+  sortOrder  Int       @default(0)
+  /// Set when the meal left the plan but its logs must be kept.
+  archivedAt DateTime?
 
   feeding Feeding      @relation(fields: [feedingId], references: [id], onDelete: Cascade)
   logs    FeedingLog[]

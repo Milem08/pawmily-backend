@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { Patient } from '../../../domain/patients/Patient';
 import { medicationDoseMark } from '../../../domain/patients/medicationDoseMark';
+import { DomainError } from '../../../domain/shared/DomainError';
+import { canonicalMealTime, mealIdentityKey } from '../../../shared/mealTime';
 import {
   CreateMedicalRecordData,
   CreatePatientData,
@@ -349,42 +351,71 @@ export class PrismaPatientRepository implements PatientRepository {
         where: { feedingId: feeding.id },
         orderBy: { sortOrder: 'asc' },
       });
-      const keepIds = new Set<string>();
+      const used = new Set<string>();
       for (let i = 0; i < meals.length; i += 1) {
-        const m = meals[i];
-        const prev = existingMeals[i];
+        const incoming = meals[i];
+        const time = canonicalMealTime(incoming.time);
+        if (!time) {
+          throw new DomainError('Hora de comida no reconocida', 400);
+        }
+        const label = incoming.label.trim();
+        let prev: (typeof existingMeals)[number] | undefined;
+        if (incoming.id) {
+          prev = existingMeals.find((row) => row.id === incoming.id);
+          if (!prev) {
+            throw new DomainError('Comida no encontrada', 400);
+          }
+          if (used.has(prev.id)) {
+            throw new DomainError('Comida repetida en el plan', 400);
+          }
+        } else {
+          const key = mealIdentityKey(label, time);
+          prev = existingMeals.find(
+            (row) => !used.has(row.id) && mealIdentityKey(row.label, row.time) === key,
+          );
+        }
+        const data = {
+          label,
+          time,
+          amount: incoming.amount ?? null,
+          food: incoming.food ?? null,
+          notes: incoming.notes ?? null,
+          sortOrder: incoming.sortOrder ?? i,
+          archivedAt: null,
+        };
         if (prev) {
-          await prisma.feedingMeal.update({
-            where: { id: prev.id },
-            data: {
-              label: m.label,
-              time: m.time,
-              amount: m.amount ?? null,
-              food: m.food ?? null,
-              notes: m.notes ?? null,
-              sortOrder: m.sortOrder ?? i,
-            },
-          });
-          keepIds.add(prev.id);
+          used.add(prev.id);
+          await prisma.feedingMeal.update({ where: { id: prev.id }, data });
         } else {
           const created = await prisma.feedingMeal.create({
             data: {
               id: `fm_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 8)}`,
               feedingId: feeding.id,
-              label: m.label,
-              time: m.time,
-              amount: m.amount ?? null,
-              food: m.food ?? null,
-              notes: m.notes ?? null,
-              sortOrder: m.sortOrder ?? i,
+              ...data,
             },
           });
-          keepIds.add(created.id);
+          used.add(created.id);
         }
       }
-      const toDelete = existingMeals.filter((m) => !keepIds.has(m.id)).map((m) => m.id);
-      if (toDelete.length) {
-        await prisma.feedingMeal.deleteMany({ where: { id: { in: toDelete } } });
+      const unused = existingMeals.filter((row) => !used.has(row.id) && !row.archivedAt);
+      if (unused.length) {
+        const logged = await prisma.feedingLog.findMany({
+          where: { mealId: { in: unused.map((row) => row.id) } },
+          select: { mealId: true },
+          distinct: ['mealId'],
+        });
+        const loggedIds = new Set(logged.map((row) => row.mealId));
+        const archiveIds = unused.filter((row) => loggedIds.has(row.id)).map((row) => row.id);
+        const deleteIds = unused.filter((row) => !loggedIds.has(row.id)).map((row) => row.id);
+        if (archiveIds.length) {
+          await prisma.feedingMeal.updateMany({
+            where: { id: { in: archiveIds } },
+            data: { archivedAt: new Date() },
+          });
+        }
+        if (deleteIds.length) {
+          await prisma.feedingMeal.deleteMany({ where: { id: { in: deleteIds } } });
+        }
       }
     }
     return this.getFeeding(petId) as Promise<NonNullable<Awaited<ReturnType<typeof this.getFeeding>>>>;
@@ -393,7 +424,7 @@ export class PrismaPatientRepository implements PatientRepository {
   async getFeeding(petId: string) {
     return prisma.feeding.findUnique({
       where: { petId },
-      include: { meals: { orderBy: { sortOrder: 'asc' } } },
+      include: { meals: { where: { archivedAt: null }, orderBy: { sortOrder: 'asc' } } },
     });
   }
 

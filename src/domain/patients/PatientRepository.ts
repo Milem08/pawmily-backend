@@ -65,6 +65,7 @@ export interface CreateMedicalRecordData {
 export type UpdateMedicalRecordData = Partial<CreateMedicalRecordData>;
 
 export interface FeedingMealInput {
+  id?: string;
   label: string;
   time: string;
   amount?: string | null;
