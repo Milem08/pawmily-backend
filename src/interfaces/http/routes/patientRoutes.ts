@@ -23,6 +23,7 @@ import { SupabaseStorage } from '../../../infrastructure/storage/SupabaseStorage
 import { prisma } from '../../../infrastructure/persistence/prisma/prismaClient';
 import { DomainError } from '../../../domain/shared/DomainError';
 import { toOwnerConsultationView } from '../../../domain/patients/ConsultationTypes';
+import { resolveStoredVetNames } from '../../../application/patients/resolveStoredVetName';
 import { parseLimit, parsePage } from '../queryPaging';
 import {
   idempotencyBegin,
@@ -74,6 +75,18 @@ async function toClientPatient(
   viewer: { id: string; role: string },
   options: ClientPatientOptions = {},
 ) {
+  if (Array.isArray(props.medicalRecords)) {
+    props = {
+      ...props,
+      medicalRecords: await resolveStoredVetNames(
+        props.medicalRecords as Array<{ vetName?: string | null }>,
+        async (id) => {
+          const user = await prisma.user.findUnique({ where: { id }, select: { name: true } });
+          return user?.name ?? null;
+        },
+      ),
+    };
+  }
   props = clinicalPropsForViewer(props, viewer);
   const rawPhoto = (props.photo as string | null | undefined) ?? null;
   const photoAssetId = (props.photoAssetId as string | null | undefined) ?? null;

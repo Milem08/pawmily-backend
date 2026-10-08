@@ -2,15 +2,16 @@ import { DomainError } from '../../domain/shared/DomainError';
 import { PatientRepository } from '../../domain/patients/PatientRepository';
 import { PatientAccessRepository } from '../../domain/access/PatientAccessRepository';
 import { AuthActor, authorizePatientAction } from '../access/authorizePatientAction';
-import { createMedicationDoseReminders, parseIntervalHours } from './MedicationDoseReminders';
+import { createMedicationDoseReminders } from './MedicationDoseReminders';
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
 /**
- * Owner (or caregiver) schedules dose reminders after reading a prescription
- * in Correo clínico / medical report. First dose time is chosen by the user.
+ * Owner or co-owner schedules dose reminders after reading a prescription
+ * in Correo clínico / medical report. Caregivers cannot schedule doses.
+ * First dose time is chosen by the user.
  */
 export class ScheduleMedicationReminders {
   constructor(
@@ -58,12 +59,6 @@ export class ScheduleMedicationReminders {
       throw new DomainError('Esta consulta no tiene medicamento para programar', 400);
     }
 
-    const frequency =
-      asString(payload.medFrequency) ||
-      asString(payload.frequency) ||
-      asString(payload.dosingFrequency) ||
-      'cada 12 h';
-
     const created = await createMedicationDoseReminders(
       this.patients,
       petId,
@@ -75,9 +70,10 @@ export class ScheduleMedicationReminders {
         time: record.time,
         typePayload: payload,
         consultationNumber: record.consultationNumber,
+        recordId,
         firstDoseDate: data.firstDoseDate,
         firstDoseTime: data.firstDoseTime,
-        intervalHours: data.intervalHours ?? parseIntervalHours(frequency),
+        intervalHours: data.intervalHours,
         durationDays: data.durationDays,
       },
     );

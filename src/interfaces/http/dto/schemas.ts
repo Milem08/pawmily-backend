@@ -198,8 +198,8 @@ export const updateMedicalRecordSchema = medicalRecordSchema.partial();
 export const scheduleMedicationSchema = z.object({
   firstDoseDate: z.string().min(1),
   firstDoseTime: z.string().min(1),
-  intervalHours: z.number().int().positive().max(48).optional(),
-  durationDays: z.number().int().positive().max(30).optional(),
+  intervalHours: z.number().int().positive().max(24 * 366).optional(),
+  durationDays: z.number().int().positive().max(366).optional(),
 });
 
 export const feedingSchema = z.object({

@@ -1,4 +1,6 @@
+import { Prisma } from '@prisma/client';
 import { Patient } from '../../../domain/patients/Patient';
+import { medicationDoseMark } from '../../../domain/patients/medicationDoseMark';
 import {
   CreateMedicalRecordData,
   CreatePatientData,
@@ -14,6 +16,28 @@ import { prisma } from './prismaClient';
 
 function mapPatient(row: any): Patient {
   return new Patient(row);
+}
+
+function reminderCreateData(petId: string, data: CreateReminderData): Prisma.ReminderCreateManyInput {
+  return {
+    petId,
+    title: data.title,
+    description: data.description ?? null,
+    date: data.date,
+    time: data.time ?? null,
+    type: data.type ?? 'recordatorio',
+    category: data.category ?? null,
+    priority: data.priority ?? 'media',
+    color: data.color ?? null,
+    icon: data.icon ?? null,
+    notifyEnabled: data.notifyEnabled ?? true,
+    notes: data.notes ?? null,
+    recurrence: data.recurrence ?? 'none',
+    createdByUserId: data.createdByUserId ?? null,
+    notificationMessage: data.notificationMessage ?? null,
+    appointmentId: data.appointmentId ?? null,
+    feedingMealId: data.feedingMealId ?? null,
+  };
 }
 
 export class PrismaPatientRepository implements PatientRepository {
@@ -375,26 +399,40 @@ export class PrismaPatientRepository implements PatientRepository {
 
   async addReminder(petId: string, data: CreateReminderData) {
     return prisma.reminder.create({
-      data: {
-        petId,
-        title: data.title,
-        description: data.description ?? null,
-        date: data.date,
-        time: data.time ?? null,
-        type: data.type ?? 'recordatorio',
-        category: data.category ?? null,
-        priority: data.priority ?? 'media',
-        color: data.color ?? null,
-        icon: data.icon ?? null,
-        notifyEnabled: data.notifyEnabled ?? true,
-        notes: data.notes ?? null,
-        recurrence: data.recurrence ?? 'none',
-        createdByUserId: data.createdByUserId ?? null,
-        notificationMessage: data.notificationMessage ?? null,
-        appointmentId: data.appointmentId ?? null,
-        feedingMealId: data.feedingMealId ?? null,
-      },
+      data: reminderCreateData(petId, data),
     });
+  }
+
+  async replacePendingMedicationDoses(
+    petId: string,
+    identity: { recordId: string; consultationNumber?: string | null },
+    doses: CreateReminderData[],
+  ): Promise<number> {
+    const mark = medicationDoseMark(identity.recordId);
+    const match: Prisma.ReminderWhereInput[] = [{ notes: { contains: mark } }];
+    const consultationNumber = identity.consultationNumber?.trim();
+    if (consultationNumber) {
+      match.push({ description: { contains: consultationNumber } });
+    }
+    const lockKey = `med-dose:${identity.recordId}`;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}), 74821)`;
+      await tx.reminder.deleteMany({
+        where: {
+          petId,
+          completed: false,
+          category: 'medicamento',
+          OR: match,
+        },
+      });
+      if (doses.length) {
+        await tx.reminder.createMany({
+          data: doses.map((dose) => reminderCreateData(petId, dose)),
+        });
+      }
+    });
+    return doses.length;
   }
 
   async updateReminder(id: string, data: UpdateReminderData) {

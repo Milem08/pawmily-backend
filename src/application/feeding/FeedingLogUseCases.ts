@@ -3,25 +3,14 @@ import { PatientRepository } from '../../domain/patients/PatientRepository';
 import { PatientAccessRepository } from '../../domain/access/PatientAccessRepository';
 import { authorizePatientAction, AuthActor } from '../access/authorizePatientAction';
 import { prisma } from '../../infrastructure/persistence/prisma/prismaClient';
+import { businessNow } from '../../shared/businessTime';
 
 type LogStatus = 'EATEN' | 'PENDING' | 'UNLOGGED' | 'PARTIAL';
 type LogReason = 'NORMAL' | 'LESS' | 'REFUSED' | 'SKIPPED' | 'OTHER';
 
-function zonedNow(timeZone = process.env.APP_TZ || 'America/Mexico_City') {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(new Date());
-  const get = (type: string) => parts.find((p) => p.type === type)?.value || '00';
-  return {
-    iso: `${get('year')}-${get('month')}-${get('day')}`,
-    minutes: Number(get('hour')) * 60 + Number(get('minute')),
-  };
+function zonedNow(): { iso: string; minutes: number } {
+  const now = businessNow();
+  return { iso: now.date, minutes: now.minutes };
 }
 
 function isoToday(): string {
