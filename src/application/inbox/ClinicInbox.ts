@@ -147,21 +147,25 @@ export async function resolveAppointmentMessages(
   appointmentId: string,
   outcome: 'accepted' | 'rejected' | 'suggested' | 'owner_confirmed',
 ): Promise<number> {
-  const rows = await prisma.clinicMessage.findMany({
-    where: {
-      OR: [
-        { type: 'appointment_request' },
-        { type: 'appointment_update' },
-      ],
-    },
-    take: 500,
-    orderBy: { createdAt: 'desc' },
-  });
+  const rows = await prisma.$queryRaw<Array<{ id: string; payload: unknown }>>`
+    SELECT "id", "payload"
+    FROM "ClinicMessage"
+    WHERE "type" IN ('appointment_request', 'appointment_update')
+      AND "payload"->>'appointmentId' = ${appointmentId}
+  `;
   let updated = 0;
   for (const row of rows) {
+    let raw = row.payload;
+    if (typeof raw === 'string') {
+      try {
+        raw = JSON.parse(raw);
+      } catch {
+        raw = null;
+      }
+    }
     const payload =
-      row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)
-        ? ({ ...(row.payload as Record<string, unknown>) } as Record<string, unknown>)
+      raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? ({ ...(raw as Record<string, unknown>) } as Record<string, unknown>)
         : null;
     if (!payload) continue;
     if (String(payload.appointmentId || '') !== appointmentId) continue;

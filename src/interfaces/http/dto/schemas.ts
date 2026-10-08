@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { DIET_LIMITS, DIET_LIMIT_MESSAGES } from '../../../domain/patients/DietCalculator';
 import { speciesRequiresBreed } from '../../../domain/patients/speciesCatalog';
 import { canonicalMealTime } from '../../../shared/mealTime';
+import { canonicalAppointmentStatus } from '../../../domain/scheduling/appointmentNotes';
 
 export const registerSchema = z
   .object({
@@ -358,7 +359,20 @@ export const rejectAppointmentSchema = z.object({
 });
 
 export const updateAppointmentSchema = createAppointmentSchema.partial().extend({
-  status: z.string().optional(),
+  status: z
+    .string()
+    .transform((value, ctx) => {
+      const canonical = canonicalAppointmentStatus(value);
+      if (!canonical) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Estado de cita no válido',
+        });
+        return z.NEVER;
+      }
+      return canonical;
+    })
+    .optional(),
   patientId: z.string().min(1).nullable().optional(),
 });
 

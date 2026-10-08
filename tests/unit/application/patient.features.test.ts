@@ -15,6 +15,7 @@ import {
 import { Appointment } from '../../../src/domain/scheduling/Appointment';
 import { AppointmentRepository } from '../../../src/domain/scheduling/AppointmentRepository';
 import { AuditService } from '../../../src/infrastructure/audit/AuditService';
+import { addCalendarDays, todayInBusinessZone } from '../../../src/shared/businessTime';
 
 function makePatient(overrides: Partial<Patient['props']> = {}) {
   return new Patient({
@@ -204,7 +205,7 @@ describe('patient feature use cases', () => {
       {
         petName: 'X',
         ownerName: 'Y',
-        date: '2026-08-01',
+        date: addCalendarDays(todayInBusinessZone(), 30),
         time: '10:00',
         patientId: 'p1',
       },

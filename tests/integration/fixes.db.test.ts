@@ -4,6 +4,7 @@ jest.setTimeout(120000);
 import { createApp } from '../../src/interfaces/http/createApp';
 import { EmailSender } from '../../src/infrastructure/email/EmailSender';
 import { prisma } from '../../src/infrastructure/persistence/prisma/prismaClient';
+import { addCalendarDays, todayInBusinessZone } from '../../src/shared/businessTime';
 import { testDatabaseConfigured } from './support';
 
 const describeDb = testDatabaseConfigured() ? describe : describe.skip;
@@ -334,7 +335,12 @@ describeDb('integración contra la base de datos de prueba', () => {
     const appointment = await request(app)
       .post('/api/appointments')
       .set(bearer(vetA.body.accessToken))
-      .send({ petName: 'Luna', ownerName: 'Ana', date: '2026-10-08', time: '09:00' });
+      .send({
+        petName: 'Luna',
+        ownerName: 'Ana',
+        date: addCalendarDays(todayInBusinessZone(), 30),
+        time: '09:00',
+      });
     expect(appointment.status).toBe(201);
     const favorite = await request(app)
       .post('/api/favorites')

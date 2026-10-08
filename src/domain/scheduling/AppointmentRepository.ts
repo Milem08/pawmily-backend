@@ -38,7 +38,7 @@ export interface AppointmentRepository {
   ): Promise<AppointmentListResult>;
   findByPatientIds(
     patientIds: string[],
-    options: { page: number; limit: number },
+    options: { page: number; limit: number; excludeStatuses?: string[] },
   ): Promise<AppointmentListResult>;
   findByMonth(vetId: string, year: number, month: number): Promise<Appointment[]>;
   update(id: string, data: UpdateAppointmentData): Promise<Appointment>;
