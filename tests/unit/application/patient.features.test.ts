@@ -11,6 +11,7 @@ import {
 import {
   AcceptAppointmentRequest,
   CreateAppointment,
+  ListAppointments,
 } from '../../../src/application/scheduling/AppointmentUseCases';
 import { Appointment } from '../../../src/domain/scheduling/Appointment';
 import { AppointmentRepository } from '../../../src/domain/scheduling/AppointmentRepository';
@@ -255,6 +256,34 @@ describe('patient feature use cases', () => {
         time: '10:00',
       }),
     );
+  });
+
+  it('sin fecha lista desde hoy y con fecha respeta el día pedido', async () => {
+    const findByVet = jest.fn(async () => ({ items: [], total: 0 }));
+    const appointments = {
+      create: jest.fn(),
+      findById: jest.fn(),
+      findByVet,
+      findByPatientIds: jest.fn(),
+      findByMonth: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    } as unknown as AppointmentRepository;
+    const uc = new ListAppointments(appointments);
+    await uc.execute({ id: 'vet1', role: 'vet' }, { limit: 2 });
+    expect(findByVet).toHaveBeenCalledWith('vet1', {
+      date: undefined,
+      fromDate: todayInBusinessZone(),
+      page: 1,
+      limit: 2,
+    });
+    await uc.execute({ id: 'vet1', role: 'vet' }, { date: '2020-01-01', limit: 2 });
+    expect(findByVet).toHaveBeenLastCalledWith('vet1', {
+      date: '2020-01-01',
+      fromDate: undefined,
+      page: 1,
+      limit: 2,
+    });
   });
 
   it('audit service swallows failures', async () => {

@@ -34,7 +34,7 @@ export interface AppointmentRepository {
   findById(id: string): Promise<Appointment | null>;
   findByVet(
     vetId: string,
-    options: { date?: string; page: number; limit: number },
+    options: { date?: string; fromDate?: string; page: number; limit: number },
   ): Promise<AppointmentListResult>;
   findByPatientIds(
     patientIds: string[],

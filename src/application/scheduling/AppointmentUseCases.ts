@@ -13,6 +13,7 @@ import {
   stripInternalTags,
 } from '../../domain/scheduling/appointmentNotes';
 import { assertBookableAppointmentSlot } from './appointmentSlot';
+import { todayInBusinessZone } from '../../shared/businessTime';
 
 async function resolveMessagesSafe(
   appointmentId: string,
@@ -725,6 +726,7 @@ export class ListAppointments {
     const limit = options.limit && options.limit > 0 ? Math.min(options.limit, 100) : 20;
     return this.appointments.findByVet(actor.id, {
       date: options.date,
+      fromDate: options.date ? undefined : todayInBusinessZone(),
       page,
       limit,
     });

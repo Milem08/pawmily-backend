@@ -78,11 +78,13 @@ export class PrismaAppointmentRepository implements AppointmentRepository {
 
   async findByVet(
     vetId: string,
-    options: { date?: string; page: number; limit: number },
+    options: { date?: string; fromDate?: string; page: number; limit: number },
   ): Promise<AppointmentListResult> {
-    const where: any = { vetId };
+    const where: Prisma.AppointmentWhereInput = { vetId };
     if (options.date) {
       where.date = options.date;
+    } else if (options.fromDate) {
+      where.date = { gte: options.fromDate };
     }
 
     const [total, rows] = await Promise.all([

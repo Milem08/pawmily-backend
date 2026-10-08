@@ -48,6 +48,18 @@ const patientBody = {
   ownerName: 'Ana',
 };
 
+function vetAppointment(
+  slot: { date: string; time: string },
+  extra: { notes?: string; patientId?: string } = {},
+) {
+  return {
+    petName: patientBody.name,
+    ownerName: patientBody.ownerName,
+    ...slot,
+    ...extra,
+  };
+}
+
 async function linkOwner(
   app: ReturnType<typeof createApp>,
   ownerToken: string,
@@ -152,7 +164,7 @@ describeDb('citas: permisos, horario, recordatorios y marcas', () => {
     const created = await request(app)
       .post('/api/appointments')
       .set(bearer(vetToken))
-      .send({ ...patientBody, ...slot, patientId, notes: 'Revisión' });
+      .send(vetAppointment(slot, { patientId, notes: 'Revisión' }));
     expect(created.status).toBe(201);
     expect(created.body.status).toBe('Solicitada');
     expect(created.body.notes).toContain('[Propuesta vet]');
@@ -186,7 +198,7 @@ describeDb('citas: permisos, horario, recordatorios y marcas', () => {
     const created = await request(app)
       .post('/api/appointments')
       .set(bearer(vetToken))
-      .send({ ...patientBody, ...slot, patientId, notes: 'Vacuna' });
+      .send(vetAppointment(slot, { patientId, notes: 'Vacuna' }));
     expect(created.status).toBe(201);
     const self = await request(app)
       .post(`/api/appointments/${created.body.id}/accept`)
@@ -208,7 +220,7 @@ describeDb('citas: permisos, horario, recordatorios y marcas', () => {
     const created = await request(app)
       .post('/api/appointments')
       .set(bearer(vetToken))
-      .send({ ...patientBody, ...slot, patientId });
+      .send(vetAppointment(slot, { patientId }));
     const accepted = await request(app)
       .post(`/api/appointments/${created.body.id}/accept`)
       .set(bearer(ownerToken))
@@ -231,7 +243,7 @@ describeDb('citas: permisos, horario, recordatorios y marcas', () => {
     const created = await request(app)
       .post('/api/appointments')
       .set(bearer(vetToken))
-      .send({ ...patientBody, ...slot, patientId });
+      .send(vetAppointment(slot, { patientId }));
     const accepted = await request(app)
       .post(`/api/appointments/${created.body.id}/accept`)
       .set(bearer(ownerToken))
@@ -258,7 +270,7 @@ describeDb('citas: permisos, horario, recordatorios y marcas', () => {
     const created = await request(app)
       .post('/api/appointments')
       .set(bearer(vetToken))
-      .send({ ...patientBody, ...slot, patientId });
+      .send(vetAppointment(slot, { patientId }));
     const accepted = await request(app)
       .post(`/api/appointments/${created.body.id}/accept`)
       .set(bearer(ownerToken))
@@ -449,7 +461,7 @@ describeDb('citas: permisos, horario, recordatorios y marcas', () => {
     const proposed = await request(app)
       .post('/api/appointments')
       .set(bearer(vet.body.accessToken))
-      .send({ ...patientBody, ...future(24, '15:00'), patientId: patient.body.id });
+      .send(vetAppointment(future(24, '15:00'), { patientId: patient.body.id }));
     const accepted = await request(app)
       .post(`/api/appointments/${proposed.body.id}/accept`)
       .set(bearer(owner.body.accessToken))
@@ -549,7 +561,7 @@ describeDb('citas: permisos, horario, recordatorios y marcas', () => {
     const proposed = await request(app)
       .post('/api/appointments')
       .set(bearer(vetToken))
-      .send({ ...patientBody, ...future(15, '10:00'), patientId, notes: '[Propuesta owner]' });
+      .send(vetAppointment(future(15, '10:00'), { patientId, notes: '[Propuesta owner]' }));
     expect(proposed.status).toBe(201);
     expect(lastProposal(proposed.body.notes)).toBe('vet');
     expect(proposed.body.notes).not.toMatch(/\[\s*propuesta\s+owner\s*\]/i);
@@ -566,7 +578,7 @@ describeDb('citas: permisos, horario, recordatorios y marcas', () => {
     const created = await request(app)
       .post('/api/appointments')
       .set(bearer(vetToken))
-      .send({ ...patientBody, ...slot, patientId, notes: 'Control' });
+      .send(vetAppointment(slot, { patientId, notes: 'Control' }));
     const before = created.body.notes as string;
     expect(before).toContain('[Propuesta vet]');
     const rewritten = await request(app)
@@ -590,6 +602,62 @@ describeDb('citas: permisos, horario, recordatorios y marcas', () => {
       .send({ patientId, ...future(18, '12:00'), notes: '[urgente] le duele la pata' });
     expect(urgent.status).toBe(201);
     expect(urgent.body.notes).toBe('[urgente] le duele la pata');
+  });
+
+  it('GET /appointments sin fecha omite las citas pasadas y conserva el día pedido', async () => {
+    const vet = await register(app, { email: `${uid('hoy')}@example.test`, role: 'vet' });
+    expect(vet.status).toBe(201);
+    const vetId = vet.body.user.id as string;
+    const upcoming = [future(2, '18:00'), future(3, '08:00'), future(4, '09:00')];
+    await prisma.appointment.createMany({
+      data: [
+        {
+          petName: 'Pasada',
+          ownerName: 'Ana',
+          date: '2020-01-01',
+          time: '23:00',
+          vetId,
+          status: 'Programada',
+        },
+        {
+          petName: 'Pasada',
+          ownerName: 'Ana',
+          date: '2020-06-01',
+          time: '08:00',
+          vetId,
+          status: 'Programada',
+        },
+        ...upcoming.map((slot) => ({
+          petName: 'Nube',
+          ownerName: 'Ana',
+          date: slot.date,
+          time: slot.time,
+          vetId,
+          status: 'Programada',
+        })),
+      ],
+    });
+
+    const listed = await request(app)
+      .get('/api/appointments?limit=2')
+      .set(bearer(vet.body.accessToken));
+    expect(listed.status).toBe(200);
+    expect(listed.body.data).toHaveLength(2);
+    expect(
+      (listed.body.data as Array<{ date: string; time: string }>).map((row) => `${row.date} ${row.time}`),
+    ).toEqual([
+      `${upcoming[0].date} ${upcoming[0].time}`,
+      `${upcoming[1].date} ${upcoming[1].time}`,
+    ]);
+    expect(listed.body.meta.total).toBe(3);
+
+    const byDate = await request(app)
+      .get('/api/appointments?date=2020-01-01')
+      .set(bearer(vet.body.accessToken));
+    expect(byDate.status).toBe(200);
+    expect(byDate.body.meta.total).toBe(1);
+    expect(byDate.body.data[0].date).toBe('2020-01-01');
+    expect(byDate.body.data[0].time).toBe('23:00');
   });
 
   it('un vet ajeno no ve la cita al aceptar y un dueño ajeno no puede rechazarla', async () => {
