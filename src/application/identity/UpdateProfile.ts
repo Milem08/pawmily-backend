@@ -22,7 +22,7 @@ export class UpdateProfile {
     private readonly refreshTokens: RefreshTokenStore,
   ) {}
 
-  async execute(userId: string, input: UpdateProfileInput) {
+  async execute(userId: string, input: UpdateProfileInput, sessionId?: string) {
     const existing = await this.users.findById(userId);
     if (!existing) {
       throw new DomainError('Usuario no encontrado', 404);
@@ -59,7 +59,7 @@ export class UpdateProfile {
 
     const user = await this.users.update(userId, data);
     if (password) {
-      await this.refreshTokens.revokeAllForUser(userId);
+      await this.refreshTokens.revokeAllForUser(userId, sessionId);
     }
     return user.toPublic();
   }

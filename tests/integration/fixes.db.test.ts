@@ -109,7 +109,7 @@ describeDb('integración contra la base de datos de prueba', () => {
     expect(second.status).toBe(401);
   });
 
-  it('AUTH-07/08 cambiar contraseña exige la actual y revoca el refresh anterior', async () => {
+  it('AUTH-07/08 cambiar contraseña exige la actual y conserva el refresh de esa sesión', async () => {
     const email = `${uid('pwd')}@example.test`;
     const created = await register(app, { email, password: 'secreto1', role: 'owner' });
     const access = created.body.accessToken as string;
@@ -133,14 +133,38 @@ describeDb('integración contra la base de datos de prueba', () => {
       .send({ password: 'secreto2', currentPassword: 'secreto1' });
     expect(ok.status).toBe(200);
 
-    const reused = await request(app).post('/api/auth/refresh').send({ refreshToken: refresh });
-    expect(reused.status).toBe(401);
+    const kept = await request(app).post('/api/auth/refresh').send({ refreshToken: refresh });
+    expect(kept.status).toBe(200);
+  });
+
+  it('BE-08 cambiar la contraseña conserva el refresh de esa sesión y revoca el de la otra', async () => {
+    const email = `${uid('sessions')}@example.test`;
+    const sessionA = await register(app, { email, password: 'secreto1', role: 'owner' });
+    expect(sessionA.status).toBe(201);
+    const sessionB = await request(app).post('/api/auth/login').send({ email, password: 'secreto1' });
+    expect(sessionB.status).toBe(200);
+
+    const changed = await request(app)
+      .put('/api/auth/profile')
+      .set(bearer(sessionA.body.accessToken))
+      .send({ password: 'secreto2', currentPassword: 'secreto1' });
+    expect(changed.status).toBe(200);
+
+    const refreshA = await request(app)
+      .post('/api/auth/refresh')
+      .send({ refreshToken: sessionA.body.refreshToken });
+    const refreshB = await request(app)
+      .post('/api/auth/refresh')
+      .send({ refreshToken: sessionB.body.refreshToken });
+    expect(refreshA.status).toBe(200);
+    expect(refreshB.status).toBe(401);
   });
 
   it('AUTH-09 no acepta el teléfono de otro usuario aunque cambie el formato', async () => {
+    const digits = String(Date.now()).slice(-8);
     const first = await register(app, {
       email: `${uid('phone-a')}@example.test`,
-      phone: '+50370000000',
+      phone: `+503${digits}`,
       role: 'owner',
     });
     expect(first.status).toBe(201);
@@ -152,7 +176,7 @@ describeDb('integración contra la base de datos de prueba', () => {
     const conflict = await request(app)
       .put('/api/auth/profile')
       .set(bearer(second.body.accessToken))
-      .send({ phone: '+503 7000-0000' });
+      .send({ phone: `+503 ${digits.slice(0, 4)}-${digits.slice(4)}` });
     expect(conflict.status).toBe(409);
   });
 
@@ -393,7 +417,7 @@ describeDb('integración contra la base de datos de prueba', () => {
     const reminder = await request(app)
       .post(`/api/patients/${patientId}/reminders`)
       .set(bearer(vet.body.accessToken))
-      .send({ title: 'Vacuna', date: '2026-10-20' });
+      .send({ title: 'Vacuna', date: '2026-10-20', type: 'cita' });
     expect(reminder.status).toBe(201);
 
     failMidDelete = true;

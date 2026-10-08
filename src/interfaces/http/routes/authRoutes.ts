@@ -148,7 +148,7 @@ export function authRoutes(container: Container): Router {
 
   router.put('/profile', auth, validateBody(updateProfileSchema), async (req, res, next) => {
     try {
-      const result = await container.updateProfile.execute(req.user!.id, req.body);
+      const result = await container.updateProfile.execute(req.user!.id, req.body, req.user!.sid);
       res.json(result);
     } catch (err) {
       next(err);

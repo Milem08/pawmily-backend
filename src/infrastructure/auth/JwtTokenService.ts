@@ -7,6 +7,7 @@ export interface TokenPayload {
   email: string;
   role: Role;
   typ?: 'access';
+  sid?: string;
 }
 
 export class JwtTokenService {

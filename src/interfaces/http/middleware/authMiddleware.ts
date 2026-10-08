@@ -7,6 +7,7 @@ export interface AuthUser {
   id: string;
   email: string;
   role: Role;
+  sid?: string;
 }
 
 declare global {
@@ -25,7 +26,12 @@ export function authMiddleware(tokens: JwtTokenService) {
     }
     try {
       const payload = tokens.verify(header.slice(7));
-      req.user = { id: payload.sub, email: payload.email, role: payload.role };
+      req.user = {
+        id: payload.sub,
+        email: payload.email,
+        role: payload.role,
+        ...(typeof payload.sid === 'string' && payload.sid ? { sid: payload.sid } : {}),
+      };
       next();
     } catch {
       next(new DomainError('Token inválido o expirado', 401));
