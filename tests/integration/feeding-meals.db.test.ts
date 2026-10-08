@@ -202,7 +202,7 @@ describeDb('comidas, historial y dieta', () => {
 
     const reminders = await request(app)
       .get(`/api/patients/${patientId}/reminders`)
-      .set(bearer(vet.body.accessToken));
+      .set(bearer(owner.body.accessToken));
     expect(reminders.status).toBe(200);
     const titles = (reminders.body as Array<{ title?: string }>).map((row) => row.title ?? '');
     expect(titles.some((title) => title.includes('Desayuno'))).toBe(false);
@@ -427,5 +427,99 @@ describeDb('comidas, historial y dieta', () => {
       .send({ weightKg: 80, mealsPerDay: 2 });
     expect(diet.status).toBe(400);
     expect(diet.body.message).toMatch(/no soportada/i);
+  });
+
+  it('la dieta usa el número de comidas activas y un valor distinto responde 400', async () => {
+    const { vet, patientId } = await clinicWithOwner();
+    const plan = await putPlan(
+      vet.body.accessToken,
+      patientId,
+      planBody([
+        { label: 'Desayuno', time: '08:00' },
+        { label: 'Almuerzo', time: '13:00' },
+        { label: 'Cena', time: '19:00' },
+      ]),
+    );
+    expect(plan.status).toBe(200);
+
+    const generated = await request(app)
+      .post(`/api/patients/${patientId}/diet`)
+      .set(bearer(vet.body.accessToken))
+      .send({ weightKg: 10 });
+    expect(generated.status).toBe(200);
+    expect(generated.body.mealsPerDay).toBe(3);
+    expect(generated.body.meals).toHaveLength(3);
+
+    const current = await request(app)
+      .get(`/api/patients/${patientId}/feeding`)
+      .set(bearer(vet.body.accessToken));
+    const savedAgain = await putPlan(vet.body.accessToken, patientId, {
+      recommendedAmount: current.body.recommendedAmount,
+      mealsPerDay: current.body.mealsPerDay,
+      meals: current.body.meals.map(
+        (meal: { id: string; label: string; time: string; amount?: string; sortOrder?: number }) => ({
+          id: meal.id,
+          label: meal.label,
+          time: meal.time,
+          amount: meal.amount,
+          sortOrder: meal.sortOrder,
+        }),
+      ),
+    });
+    expect(savedAgain.status).toBe(200);
+
+    const before = await request(app)
+      .get(`/api/patients/${patientId}/feeding`)
+      .set(bearer(vet.body.accessToken));
+    const mismatch = await request(app)
+      .post(`/api/patients/${patientId}/diet`)
+      .set(bearer(vet.body.accessToken))
+      .send({ weightKg: 10, mealsPerDay: 5 });
+    expect(mismatch.status).toBe(400);
+    expect(mismatch.body.message).toMatch(/no coincide/i);
+    const after = await request(app)
+      .get(`/api/patients/${patientId}/feeding`)
+      .set(bearer(vet.body.accessToken));
+    expect(after.body.mealsPerDay).toBe(before.body.mealsPerDay);
+    expect(after.body.recommendedAmount).toBe(before.body.recommendedAmount);
+    expect(after.body.meals.map((meal: { id: string }) => meal.id)).toEqual(
+      before.body.meals.map((meal: { id: string }) => meal.id),
+    );
+  });
+
+  it('un id de comida inexistente responde 400 y no cambia el plan', async () => {
+    const { vet, patientId } = await clinicWithOwner();
+    const plan = await putPlan(
+      vet.body.accessToken,
+      patientId,
+      planBody([
+        { label: 'Desayuno', time: '08:00' },
+        { label: 'Cena', time: '19:00' },
+      ]),
+    );
+    expect(plan.status).toBe(200);
+    const breakfast = plan.body.meals[0];
+    const rejected = await putPlan(
+      vet.body.accessToken,
+      patientId,
+      planBody(
+        [
+          { id: breakfast.id, label: 'Cambiado', time: '08:00' },
+          { id: 'fm_no_existe', label: 'Fantasma', time: '19:00' },
+        ],
+        { recommendedAmount: '999 g' },
+      ),
+    );
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.message).toMatch(/Comida no encontrada/);
+
+    const after = await request(app)
+      .get(`/api/patients/${patientId}/feeding`)
+      .set(bearer(vet.body.accessToken));
+    expect(after.body.recommendedAmount).toBe('200 g');
+    expect(after.body.meals.find((meal: { id: string }) => meal.id === breakfast.id).label).toBe(
+      'Desayuno',
+    );
+    expect(after.body.meals).toHaveLength(2);
   });
 });

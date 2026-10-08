@@ -1,4 +1,5 @@
 import { DomainError } from '../../../src/domain/shared/DomainError';
+import { DIET_LIMIT_MESSAGES } from '../../../src/domain/patients/DietCalculator';
 import { Patient } from '../../../src/domain/patients/Patient';
 import { PatientRepository } from '../../../src/domain/patients/PatientRepository';
 import { PatientAccessRepository } from '../../../src/domain/access/PatientAccessRepository';
@@ -136,6 +137,46 @@ describe('patient feature use cases', () => {
     expect(feeding.caloriesPerDay).toBeGreaterThan(0);
     expect(feeding.recommendedAmount).toBeTruthy();
     expect(feeding.formulaVersion).toBe('rer-mer-v1');
+  });
+
+  it('alinea mealsPerDay con las comidas activas', async () => {
+    const patient = makePatient();
+    const repo = makePatientRepo(patient);
+    (repo.getFeeding as jest.Mock).mockResolvedValue({
+      id: 'f1',
+      petId: 'p1',
+      meals: [
+        { id: 'a', label: 'Desayuno', time: '08:00', sortOrder: 0 },
+        { id: 'b', label: 'Almuerzo', time: '13:00', sortOrder: 1 },
+        { id: 'c', label: 'Cena', time: '19:00', sortOrder: 2 },
+      ],
+    });
+    const uc = new GenerateDiet(repo, makeAccessRepo());
+    const feeding = await uc.execute({ id: 'vet1', role: 'vet' }, 'p1', { weightKg: 10 });
+    expect(feeding.mealsPerDay).toBe(3);
+    expect(repo.upsertFeeding).toHaveBeenCalledWith(
+      'p1',
+      expect.objectContaining({ mealsPerDay: 3 }),
+    );
+  });
+
+  it('rechaza mealsPerDay distinto de las comidas activas sin guardar', async () => {
+    const patient = makePatient();
+    const repo = makePatientRepo(patient);
+    (repo.getFeeding as jest.Mock).mockResolvedValue({
+      id: 'f1',
+      petId: 'p1',
+      meals: [
+        { id: 'a', label: 'Desayuno', time: '08:00', sortOrder: 0 },
+        { id: 'b', label: 'Almuerzo', time: '13:00', sortOrder: 1 },
+        { id: 'c', label: 'Cena', time: '19:00', sortOrder: 2 },
+      ],
+    });
+    const uc = new GenerateDiet(repo, makeAccessRepo());
+    await expect(
+      uc.execute({ id: 'vet1', role: 'vet' }, 'p1', { weightKg: 10, mealsPerDay: 5 }),
+    ).rejects.toMatchObject({ statusCode: 400, message: DIET_LIMIT_MESSAGES.mealsMismatch });
+    expect(repo.upsertFeeding).not.toHaveBeenCalled();
   });
 
   it('does not create a cita reminder when the appointment is only requested', async () => {

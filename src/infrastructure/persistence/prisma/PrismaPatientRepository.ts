@@ -1,8 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Patient } from '../../../domain/patients/Patient';
 import { medicationDoseMark } from '../../../domain/patients/medicationDoseMark';
-import { DomainError } from '../../../domain/shared/DomainError';
-import { canonicalMealTime, mealIdentityKey } from '../../../shared/mealTime';
+import { prepareFeedingMealChanges } from './prepareFeedingMeals';
 import {
   CreateMedicalRecordData,
   CreatePatientData,
@@ -341,83 +340,66 @@ export class PrismaPatientRepository implements PatientRepository {
       startDate: rest.startDate ?? undefined,
       reviewDate: rest.reviewDate ?? undefined,
     };
-    const feeding = await prisma.feeding.upsert({
-      where: { petId },
-      update: feedingData,
-      create: { petId, ...feedingData },
-    });
-    if (meals) {
-      const existingMeals = await prisma.feedingMeal.findMany({
-        where: { feedingId: feeding.id },
-        orderBy: { sortOrder: 'asc' },
+    const existing = meals
+      ? await prisma.feeding.findUnique({
+          where: { petId },
+          include: { meals: true },
+        })
+      : null;
+    const prepared = meals ? prepareFeedingMealChanges(existing?.meals ?? [], meals) : null;
+
+    await prisma.$transaction(async (tx) => {
+      const feeding = await tx.feeding.upsert({
+        where: { petId },
+        update: feedingData,
+        create: { petId, ...feedingData },
       });
-      const used = new Set<string>();
-      for (let i = 0; i < meals.length; i += 1) {
-        const incoming = meals[i];
-        const time = canonicalMealTime(incoming.time);
-        if (!time) {
-          throw new DomainError('Hora de comida no reconocida', 400);
-        }
-        const label = incoming.label.trim();
-        let prev: (typeof existingMeals)[number] | undefined;
-        if (incoming.id) {
-          prev = existingMeals.find((row) => row.id === incoming.id);
-          if (!prev) {
-            throw new DomainError('Comida no encontrada', 400);
-          }
-          if (used.has(prev.id)) {
-            throw new DomainError('Comida repetida en el plan', 400);
-          }
-        } else {
-          const key = mealIdentityKey(label, time);
-          prev = existingMeals.find(
-            (row) => !used.has(row.id) && mealIdentityKey(row.label, row.time) === key,
-          );
-        }
-        const data = {
-          label,
-          time,
-          amount: incoming.amount ?? null,
-          food: incoming.food ?? null,
-          notes: incoming.notes ?? null,
-          sortOrder: incoming.sortOrder ?? i,
+      if (!prepared) return;
+
+      for (let i = 0; i < prepared.writes.length; i += 1) {
+        const row = prepared.writes[i];
+        const mealData = {
+          label: row.label,
+          time: row.time,
+          amount: row.amount,
+          food: row.food,
+          notes: row.notes,
+          sortOrder: row.sortOrder,
           archivedAt: null,
         };
-        if (prev) {
-          used.add(prev.id);
-          await prisma.feedingMeal.update({ where: { id: prev.id }, data });
+        if (row.existingId) {
+          await tx.feedingMeal.update({ where: { id: row.existingId }, data: mealData });
         } else {
-          const created = await prisma.feedingMeal.create({
+          await tx.feedingMeal.create({
             data: {
               id: `fm_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 8)}`,
               feedingId: feeding.id,
-              ...data,
+              ...mealData,
             },
           });
-          used.add(created.id);
         }
       }
-      const unused = existingMeals.filter((row) => !used.has(row.id) && !row.archivedAt);
-      if (unused.length) {
-        const logged = await prisma.feedingLog.findMany({
-          where: { mealId: { in: unused.map((row) => row.id) } },
+
+      if (prepared.unusedIds.length) {
+        const logged = await tx.feedingLog.findMany({
+          where: { mealId: { in: prepared.unusedIds } },
           select: { mealId: true },
           distinct: ['mealId'],
         });
         const loggedIds = new Set(logged.map((row) => row.mealId));
-        const archiveIds = unused.filter((row) => loggedIds.has(row.id)).map((row) => row.id);
-        const deleteIds = unused.filter((row) => !loggedIds.has(row.id)).map((row) => row.id);
+        const archiveIds = prepared.unusedIds.filter((id) => loggedIds.has(id));
+        const deleteIds = prepared.unusedIds.filter((id) => !loggedIds.has(id));
         if (archiveIds.length) {
-          await prisma.feedingMeal.updateMany({
+          await tx.feedingMeal.updateMany({
             where: { id: { in: archiveIds } },
             data: { archivedAt: new Date() },
           });
         }
         if (deleteIds.length) {
-          await prisma.feedingMeal.deleteMany({ where: { id: { in: deleteIds } } });
+          await tx.feedingMeal.deleteMany({ where: { id: { in: deleteIds } } });
         }
       }
-    }
+    });
     return this.getFeeding(petId) as Promise<NonNullable<Awaited<ReturnType<typeof this.getFeeding>>>>;
   }
 

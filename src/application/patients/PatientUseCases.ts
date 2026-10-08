@@ -1,5 +1,5 @@
 import { DomainError } from '../../domain/shared/DomainError';
-import { calculateDiet } from '../../domain/patients/DietCalculator';
+import { calculateDiet, DIET_LIMIT_MESSAGES } from '../../domain/patients/DietCalculator';
 import { generateSecurePatientCode, Patient } from '../../domain/patients/Patient';
 import {
   CreateMedicalRecordData,
@@ -541,15 +541,19 @@ export class GenerateDiet {
       petId,
       'WRITE_FEEDING',
     );
+    const existing = await this.patients.getFeeding(petId);
+    const activeMeals = existing?.meals?.length ?? 0;
+    if (activeMeals > 0 && data.mealsPerDay != null && data.mealsPerDay !== activeMeals) {
+      throw new DomainError(DIET_LIMIT_MESSAGES.mealsMismatch, 400);
+    }
     const diet = calculateDiet({
       weightKg: data.weightKg,
-      mealsPerDay: data.mealsPerDay,
+      mealsPerDay: activeMeals > 0 ? activeMeals : data.mealsPerDay,
       activityFactor: data.activityFactor,
       vetNotes: data.vetNotes,
       species: data.species ?? patient.props.species,
     });
 
-    const existing = await this.patients.getFeeding(petId);
     const today = todayInBusinessZone();
 
     return this.patients.upsertFeeding(petId, {
