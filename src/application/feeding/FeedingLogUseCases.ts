@@ -3,28 +3,32 @@ import { PatientRepository } from '../../domain/patients/PatientRepository';
 import { PatientAccessRepository } from '../../domain/access/PatientAccessRepository';
 import { authorizePatientAction, AuthActor } from '../access/authorizePatientAction';
 import { prisma } from '../../infrastructure/persistence/prisma/prismaClient';
+import { businessNow, addCalendarDays, isBusinessDate, todayInBusinessZone } from '../../shared/businessTime';
+import { closeActionForMeal, summarizeFeeding } from './feedingSchedule';
 
 type LogStatus = 'EATEN' | 'PENDING' | 'UNLOGGED' | 'PARTIAL';
 type LogReason = 'NORMAL' | 'LESS' | 'REFUSED' | 'SKIPPED' | 'OTHER';
 
+function zonedNow(): { iso: string; minutes: number } {
+  const now = businessNow();
+  return { iso: now.date, minutes: now.minutes };
+}
+
 function isoToday(): string {
-  return new Date().toISOString().slice(0, 10);
+  return zonedNow().iso;
 }
 
-function addDaysIso(iso: string, delta: number): string {
-  const d = new Date(iso + 'T12:00:00');
-  d.setDate(d.getDate() + delta);
-  return d.toISOString().slice(0, 10);
-}
-
-function weekRange(anchor?: string): { from: string; to: string; days: string[] } {
-  const base = anchor || isoToday();
-  const d = new Date(base + 'T12:00:00');
-  const day = d.getDay(); // 0 Sun
-  const mondayOffset = day === 0 ? -6 : 1 - day;
-  const monday = addDaysIso(base, mondayOffset);
-  const days = Array.from({ length: 7 }, (_, i) => addDaysIso(monday, i));
+function weekRange(anchor: string): { from: string; to: string; days: string[] } {
+  const [year, month, dayOfMonth] = anchor.split('-').map(Number);
+  const weekday = new Date(Date.UTC(year, month - 1, dayOfMonth)).getUTCDay();
+  const mondayOffset = weekday === 0 ? -6 : 1 - weekday;
+  const monday = addCalendarDays(anchor, mondayOffset);
+  const days = Array.from({ length: 7 }, (_, i) => addCalendarDays(monday, i));
   return { from: days[0], to: days[6], days };
+}
+
+function businessDateOr(value: string | undefined, fallback: string): string {
+  return value && isBusinessDate(value) ? value : fallback;
 }
 
 export class ListFeedingLogs {
@@ -75,6 +79,12 @@ export class MarkFeedingLog {
     },
   ) {
     await authorizePatientAction(this.patients, this.accesses, actor, petId, 'READ');
+    if (!isBusinessDate(input.scheduledDate)) {
+      throw new DomainError('La fecha debe tener el formato AAAA-MM-DD', 400);
+    }
+    if (input.scheduledDate > isoToday()) {
+      throw new DomainError('No se puede registrar una comida en una fecha futura', 400);
+    }
     const meal = await prisma.feedingMeal.findUnique({
       where: { id: input.mealId },
       include: { feeding: true },
@@ -82,7 +92,14 @@ export class MarkFeedingLog {
     if (!meal || meal.feeding.petId !== petId) {
       throw new DomainError('Comida no encontrada', 404);
     }
-    const planStatus = (meal.feeding as { status?: string }).status || 'ACTIVE';
+    const startDate = meal.feeding.startDate;
+    if (startDate && isBusinessDate(startDate) && input.scheduledDate < startDate) {
+      throw new DomainError('La fecha es anterior al inicio del plan', 400);
+    }
+    if (meal.archivedAt) {
+      throw new DomainError('La comida ya no está en el plan', 400);
+    }
+    const planStatus = meal.feeding.status || 'ACTIVE';
     if (planStatus !== 'ACTIVE') {
       throw new DomainError('El plan de alimentación no está activo', 400);
     }
@@ -195,16 +212,13 @@ export class SyncFeedingReminders {
   }
 }
 
-/** Marks PENDING (or missing) meal logs for a calendar day as UNLOGGED. */
+/** Marks PENDING (or missing) meal logs for a past business day as UNLOGGED. */
 export class CloseUnloggedFeedingLogs {
-  async execute(forDate?: string) {
+  async execute(forDate?: string, now: Date = new Date()) {
     const day =
-      forDate ||
-      (() => {
-        const d = new Date();
-        d.setDate(d.getDate() - 1);
-        return d.toISOString().slice(0, 10);
-      })();
+      forDate && isBusinessDate(forDate)
+        ? forDate
+        : addCalendarDays(todayInBusinessZone(now), -1);
 
     const meals = await prisma.feedingMeal.findMany({
       include: { feeding: true },
@@ -212,19 +226,21 @@ export class CloseUnloggedFeedingLogs {
 
     let closed = 0;
     for (const meal of meals) {
-      const planStatus = (meal.feeding as { status?: string }).status || 'ACTIVE';
-      if (planStatus !== 'ACTIVE') continue;
-
-      const petId = meal.feeding.petId;
       const existing = await prisma.feedingLog.findUnique({
         where: {
           mealId_scheduledDate: { mealId: meal.id, scheduledDate: day },
         },
       });
       if (
-        existing?.status === 'EATEN' ||
-        existing?.status === 'UNLOGGED' ||
-        existing?.status === 'PARTIAL'
+        closeActionForMeal({
+          day,
+          mealTime: meal.time,
+          planStatus: meal.feeding.status,
+          startDate: meal.feeding.startDate,
+          archivedAt: meal.archivedAt,
+          existingStatus: existing?.status,
+          now,
+        }) === 'skip'
       ) {
         continue;
       }
@@ -236,7 +252,7 @@ export class CloseUnloggedFeedingLogs {
         create: {
           id: `fl_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
           mealId: meal.id,
-          patientId: petId,
+          patientId: meal.feeding.petId,
           scheduledDate: day,
           status: 'UNLOGGED',
           reason: 'SKIPPED',
@@ -262,81 +278,65 @@ export class GetFeedingSummary {
     private readonly accesses: PatientAccessRepository,
   ) {}
 
-  async execute(actor: AuthActor, petId: string, options?: { from?: string; to?: string; asOf?: string }) {
+  async execute(
+    actor: AuthActor,
+    petId: string,
+    options?: { from?: string; to?: string; asOf?: string },
+  ) {
     await authorizePatientAction(this.patients, this.accesses, actor, petId, 'READ');
     const feeding = await this.patients.getFeeding(petId);
     if (!feeding) {
       return {
         plan: null,
-        compliance: { scheduled: 0, eaten: 0, partial: 0, unlogged: 0, pending: 0, percent: 0 },
-        week: { days: [] as string[], meals: [] as Array<{ id: string; label: string; cells: string[] }> },
+        compliance: { scheduled: 0, eaten: 0, partial: 0, unlogged: 0, pending: 0, percent: null as number | null },
+        week: { days: [] as string[], meals: [] as Array<{ id: string; label: string; time: string; cells: string[] }> },
       };
     }
 
-    const week = weekRange(options?.from || isoToday());
-    const from = options?.from || week.from;
-    const to = options?.to || week.to;
-
-    const meals = (feeding.meals || []).slice().sort((a, b) => a.sortOrder - b.sortOrder);
+    const week = weekRange(businessDateOr(options?.from, isoToday()));
+    const from = businessDateOr(options?.from, week.from);
+    const to = businessDateOr(options?.to, week.to);
+    const mealRows = await prisma.feedingMeal.findMany({
+      where: { feedingId: feeding.id },
+      orderBy: { sortOrder: 'asc' },
+    });
     const logs = await prisma.feedingLog.findMany({
       where: {
         patientId: petId,
         scheduledDate: { gte: from, lte: to },
       },
     });
-
-    const byKey = new Map(logs.map((l) => [`${l.mealId}|${l.scheduledDate}`, l]));
-    const today = isoToday();
-
-    let eaten = 0;
-    let partial = 0;
-    let unlogged = 0;
-    let pending = 0;
-    let scheduled = 0;
-
-    // Only count meals due so far (through today). Future slots must not dilute % .
-    const endForCompliance = to < today ? to : today;
-    for (const day of enumerateDays(from, endForCompliance)) {
-      for (const meal of meals) {
-        scheduled += 1;
-        const log = byKey.get(`${meal.id}|${day}`);
-        const status = log?.status || (day < today ? 'UNLOGGED' : 'PENDING');
-        if (status === 'EATEN') eaten += 1;
-        else if (status === 'PARTIAL') partial += 1;
-        else if (status === 'UNLOGGED') unlogged += 1;
-        else pending += 1;
-      }
-    }
-
-    const done = eaten + partial;
-    const percent = scheduled > 0 ? Math.round((done / scheduled) * 100) : 0;
-
-    const weekMeals = meals.map((meal) => ({
-      id: meal.id,
-      label: meal.label,
-      time: meal.time,
-      cells: week.days.map((day) => {
-        const log = byKey.get(`${meal.id}|${day}`);
-        if (log?.status) return log.status;
-        return day < today ? 'UNLOGGED' : day === today ? 'PENDING' : 'PENDING';
-      }),
-    }));
+    const summary = summarizeFeeding({
+      meals: mealRows.map((meal) => ({
+        id: meal.id,
+        label: meal.label,
+        time: meal.time,
+        sortOrder: meal.sortOrder,
+        archivedAt: meal.archivedAt,
+      })),
+      logs: logs.map((log) => ({
+        mealId: log.mealId,
+        scheduledDate: log.scheduledDate,
+        status: log.status,
+      })),
+      from,
+      to,
+      weekDays: week.days,
+      startDate: feeding.startDate,
+      asOf: options?.asOf,
+    });
 
     return {
       plan: feeding,
-      compliance: { scheduled, eaten, partial, unlogged, pending, percent },
-      week: { days: week.days, meals: weekMeals },
+      compliance: {
+        scheduled: summary.scheduled,
+        eaten: summary.eaten,
+        partial: summary.partial,
+        unlogged: summary.unlogged,
+        pending: summary.pending,
+        percent: summary.percent,
+      },
+      week: { days: week.days, meals: summary.weekMeals },
     };
   }
-}
-
-function enumerateDays(from: string, to: string): string[] {
-  const out: string[] = [];
-  let cur = from;
-  while (cur <= to) {
-    out.push(cur);
-    cur = addDaysIso(cur, 1);
-    if (out.length > 62) break;
-  }
-  return out;
 }

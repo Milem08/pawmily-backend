@@ -45,6 +45,16 @@ export class PrismaUserRepository implements UserRepository {
     return row ? mapUser(row) : null;
   }
 
+  async isPhoneUsedByOther(userId: string, phone: string): Promise<boolean> {
+    const digits = phone.replace(/\D/g, '');
+    if (!digits) return false;
+    const rows = await prisma.user.findMany({
+      where: { phone: { not: null }, id: { not: userId } },
+      select: { phone: true },
+    });
+    return rows.some((row) => (row.phone || '').replace(/\D/g, '') === digits);
+  }
+
   async create(data: CreateUserData): Promise<User> {
     const row = await prisma.user.create({
       data: {

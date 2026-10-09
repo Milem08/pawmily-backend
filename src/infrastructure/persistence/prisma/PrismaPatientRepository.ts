@@ -1,4 +1,7 @@
+import { Prisma } from '@prisma/client';
 import { Patient } from '../../../domain/patients/Patient';
+import { medicationDoseMark } from '../../../domain/patients/medicationDoseMark';
+import { prepareFeedingMealChanges } from './prepareFeedingMeals';
 import {
   CreateMedicalRecordData,
   CreatePatientData,
@@ -14,6 +17,28 @@ import { prisma } from './prismaClient';
 
 function mapPatient(row: any): Patient {
   return new Patient(row);
+}
+
+function reminderCreateData(petId: string, data: CreateReminderData): Prisma.ReminderCreateManyInput {
+  return {
+    petId,
+    title: data.title,
+    description: data.description ?? null,
+    date: data.date,
+    time: data.time ?? null,
+    type: data.type ?? 'recordatorio',
+    category: data.category ?? null,
+    priority: data.priority ?? 'media',
+    color: data.color ?? null,
+    icon: data.icon ?? null,
+    notifyEnabled: data.notifyEnabled ?? true,
+    notes: data.notes ?? null,
+    recurrence: data.recurrence ?? 'none',
+    createdByUserId: data.createdByUserId ?? null,
+    notificationMessage: data.notificationMessage ?? null,
+    appointmentId: data.appointmentId ?? null,
+    feedingMealId: data.feedingMealId ?? null,
+  };
 }
 
 export class PrismaPatientRepository implements PatientRepository {
@@ -233,15 +258,17 @@ export class PrismaPatientRepository implements PatientRepository {
   }
 
   async delete(id: string): Promise<void> {
-    await prisma.linkRequest.deleteMany({ where: { patientId: id } });
-    await prisma.patientAccess.deleteMany({ where: { patientId: id } });
-    await prisma.mediaAsset.deleteMany({ where: { patientId: id } });
-    await prisma.auditLog.updateMany({ where: { patientId: id }, data: { patientId: null } });
-    await prisma.reminder.deleteMany({ where: { petId: id } });
-    await prisma.medicalRecord.deleteMany({ where: { petId: id } });
-    await prisma.feeding.deleteMany({ where: { petId: id } });
-    await prisma.appointment.updateMany({ where: { patientId: id }, data: { patientId: null } });
-    await prisma.patient.delete({ where: { id } });
+    await prisma.$transaction(async (tx) => {
+      await tx.linkRequest.deleteMany({ where: { patientId: id } });
+      await tx.patientAccess.deleteMany({ where: { patientId: id } });
+      await tx.mediaAsset.deleteMany({ where: { patientId: id } });
+      await tx.auditLog.updateMany({ where: { patientId: id }, data: { patientId: null } });
+      await tx.reminder.deleteMany({ where: { petId: id } });
+      await tx.medicalRecord.deleteMany({ where: { petId: id } });
+      await tx.feeding.deleteMany({ where: { petId: id } });
+      await tx.appointment.updateMany({ where: { patientId: id }, data: { patientId: null } });
+      await tx.patient.delete({ where: { id } });
+    });
   }
 
   async addMedicalRecord(petId: string, data: CreateMedicalRecordData) {
@@ -313,86 +340,112 @@ export class PrismaPatientRepository implements PatientRepository {
       startDate: rest.startDate ?? undefined,
       reviewDate: rest.reviewDate ?? undefined,
     };
-    const feeding = await prisma.feeding.upsert({
-      where: { petId },
-      update: feedingData,
-      create: { petId, ...feedingData },
-    });
-    if (meals) {
-      const existingMeals = await prisma.feedingMeal.findMany({
-        where: { feedingId: feeding.id },
-        orderBy: { sortOrder: 'asc' },
+    const existing = meals
+      ? await prisma.feeding.findUnique({
+          where: { petId },
+          include: { meals: true },
+        })
+      : null;
+    const prepared = meals ? prepareFeedingMealChanges(existing?.meals ?? [], meals) : null;
+
+    await prisma.$transaction(async (tx) => {
+      const feeding = await tx.feeding.upsert({
+        where: { petId },
+        update: feedingData,
+        create: { petId, ...feedingData },
       });
-      const keepIds = new Set<string>();
-      for (let i = 0; i < meals.length; i += 1) {
-        const m = meals[i];
-        const prev = existingMeals[i];
-        if (prev) {
-          await prisma.feedingMeal.update({
-            where: { id: prev.id },
-            data: {
-              label: m.label,
-              time: m.time,
-              amount: m.amount ?? null,
-              food: m.food ?? null,
-              notes: m.notes ?? null,
-              sortOrder: m.sortOrder ?? i,
-            },
-          });
-          keepIds.add(prev.id);
+      if (!prepared) return;
+
+      for (let i = 0; i < prepared.writes.length; i += 1) {
+        const row = prepared.writes[i];
+        const mealData = {
+          label: row.label,
+          time: row.time,
+          amount: row.amount,
+          food: row.food,
+          notes: row.notes,
+          sortOrder: row.sortOrder,
+          archivedAt: null,
+        };
+        if (row.existingId) {
+          await tx.feedingMeal.update({ where: { id: row.existingId }, data: mealData });
         } else {
-          const created = await prisma.feedingMeal.create({
+          await tx.feedingMeal.create({
             data: {
               id: `fm_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 8)}`,
               feedingId: feeding.id,
-              label: m.label,
-              time: m.time,
-              amount: m.amount ?? null,
-              food: m.food ?? null,
-              notes: m.notes ?? null,
-              sortOrder: m.sortOrder ?? i,
+              ...mealData,
             },
           });
-          keepIds.add(created.id);
         }
       }
-      const toDelete = existingMeals.filter((m) => !keepIds.has(m.id)).map((m) => m.id);
-      if (toDelete.length) {
-        await prisma.feedingMeal.deleteMany({ where: { id: { in: toDelete } } });
+
+      if (prepared.unusedIds.length) {
+        const logged = await tx.feedingLog.findMany({
+          where: { mealId: { in: prepared.unusedIds } },
+          select: { mealId: true },
+          distinct: ['mealId'],
+        });
+        const loggedIds = new Set(logged.map((row) => row.mealId));
+        const archiveIds = prepared.unusedIds.filter((id) => loggedIds.has(id));
+        const deleteIds = prepared.unusedIds.filter((id) => !loggedIds.has(id));
+        if (archiveIds.length) {
+          await tx.feedingMeal.updateMany({
+            where: { id: { in: archiveIds } },
+            data: { archivedAt: new Date() },
+          });
+        }
+        if (deleteIds.length) {
+          await tx.feedingMeal.deleteMany({ where: { id: { in: deleteIds } } });
+        }
       }
-    }
+    });
     return this.getFeeding(petId) as Promise<NonNullable<Awaited<ReturnType<typeof this.getFeeding>>>>;
   }
 
   async getFeeding(petId: string) {
     return prisma.feeding.findUnique({
       where: { petId },
-      include: { meals: { orderBy: { sortOrder: 'asc' } } },
+      include: { meals: { where: { archivedAt: null }, orderBy: { sortOrder: 'asc' } } },
     });
   }
 
   async addReminder(petId: string, data: CreateReminderData) {
     return prisma.reminder.create({
-      data: {
-        petId,
-        title: data.title,
-        description: data.description ?? null,
-        date: data.date,
-        time: data.time ?? null,
-        type: data.type ?? 'recordatorio',
-        category: data.category ?? null,
-        priority: data.priority ?? 'media',
-        color: data.color ?? null,
-        icon: data.icon ?? null,
-        notifyEnabled: data.notifyEnabled ?? true,
-        notes: data.notes ?? null,
-        recurrence: data.recurrence ?? 'none',
-        createdByUserId: data.createdByUserId ?? null,
-        notificationMessage: data.notificationMessage ?? null,
-        appointmentId: data.appointmentId ?? null,
-        feedingMealId: data.feedingMealId ?? null,
-      },
+      data: reminderCreateData(petId, data),
     });
+  }
+
+  async replacePendingMedicationDoses(
+    petId: string,
+    identity: { recordId: string; consultationNumber?: string | null },
+    doses: CreateReminderData[],
+  ): Promise<number> {
+    const mark = medicationDoseMark(identity.recordId);
+    const match: Prisma.ReminderWhereInput[] = [{ notes: { contains: mark } }];
+    const consultationNumber = identity.consultationNumber?.trim();
+    if (consultationNumber) {
+      match.push({ description: { contains: consultationNumber } });
+    }
+    const lockKey = `med-dose:${identity.recordId}`;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}), 74821)`;
+      await tx.reminder.deleteMany({
+        where: {
+          petId,
+          completed: false,
+          category: 'medicamento',
+          OR: match,
+        },
+      });
+      if (doses.length) {
+        await tx.reminder.createMany({
+          data: doses.map((dose) => reminderCreateData(petId, dose)),
+        });
+      }
+    });
+    return doses.length;
   }
 
   async updateReminder(id: string, data: UpdateReminderData) {

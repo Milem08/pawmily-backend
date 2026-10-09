@@ -65,6 +65,7 @@ export interface CreateMedicalRecordData {
 export type UpdateMedicalRecordData = Partial<CreateMedicalRecordData>;
 
 export interface FeedingMealInput {
+  id?: string;
   label: string;
   time: string;
   amount?: string | null;
@@ -173,6 +174,15 @@ export interface PatientRepository {
   upsertFeeding(petId: string, data: UpsertFeedingData): Promise<FeedingProps>;
   getFeeding(petId: string): Promise<FeedingProps | null>;
   addReminder(petId: string, data: CreateReminderData): Promise<ReminderProps>;
+  /**
+   * Drops pending dose reminders for one consultation and inserts the new course
+   * in a single transaction.
+   */
+  replacePendingMedicationDoses(
+    petId: string,
+    identity: { recordId: string; consultationNumber?: string | null },
+    doses: CreateReminderData[],
+  ): Promise<number>;
   updateReminder(id: string, data: UpdateReminderData): Promise<ReminderProps>;
   listReminders(petId: string): Promise<ReminderProps[]>;
   deleteReminder(id: string): Promise<void>;

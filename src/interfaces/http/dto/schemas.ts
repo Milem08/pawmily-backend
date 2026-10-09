@@ -1,5 +1,8 @@
 import { z } from 'zod';
+import { DIET_LIMITS, DIET_LIMIT_MESSAGES } from '../../../domain/patients/DietCalculator';
 import { speciesRequiresBreed } from '../../../domain/patients/speciesCatalog';
+import { canonicalMealTime } from '../../../shared/mealTime';
+import { canonicalAppointmentStatus } from '../../../domain/scheduling/appointmentNotes';
 
 export const registerSchema = z
   .object({
@@ -36,11 +39,26 @@ export const updateProfileSchema = z.object({
   license: z.string().optional(),
   photo: z.string().optional(),
   password: z.string().min(6).optional(),
+  currentPassword: z.string().min(1).optional(),
 });
 
+const feedingMealTimeSchema = z
+  .string()
+  .trim()
+  .min(1, 'Hora de comida no reconocida')
+  .transform((value, ctx) => {
+    const canon = canonicalMealTime(value);
+    if (!canon) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Hora de comida no reconocida' });
+      return z.NEVER;
+    }
+    return canon;
+  });
+
 const feedingMealSchema = z.object({
+  id: z.string().min(1).optional(),
   label: z.string().min(1),
-  time: z.string().min(1),
+  time: feedingMealTimeSchema,
   amount: z.string().optional().nullable(),
   food: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
@@ -197,16 +215,24 @@ export const updateMedicalRecordSchema = medicalRecordSchema.partial();
 export const scheduleMedicationSchema = z.object({
   firstDoseDate: z.string().min(1),
   firstDoseTime: z.string().min(1),
-  intervalHours: z.number().int().positive().max(48).optional(),
-  durationDays: z.number().int().positive().max(30).optional(),
+  intervalHours: z.number().int().positive().max(24 * 366).optional(),
+  durationDays: z.number().int().positive().max(366).optional(),
 });
 
 export const feedingSchema = z.object({
   recommendedAmount: z.string().min(1),
-  mealsPerDay: z.number().int().positive(),
+  mealsPerDay: z
+    .number()
+    .int(DIET_LIMIT_MESSAGES.meals)
+    .min(DIET_LIMITS.mealsPerDayMin, DIET_LIMIT_MESSAGES.meals)
+    .max(DIET_LIMITS.mealsPerDayMax, DIET_LIMIT_MESSAGES.meals),
   specialInstructions: z.string().optional(),
   schedule: z.string().optional(),
-  weightKg: z.number().positive().optional(),
+  weightKg: z
+    .number()
+    .min(DIET_LIMITS.weightKgMin, DIET_LIMIT_MESSAGES.weight)
+    .max(DIET_LIMITS.weightKgMax, DIET_LIMIT_MESSAGES.weight)
+    .optional(),
   caloriesPerDay: z.number().int().positive().optional(),
   formulaVersion: z.string().optional(),
   vetNotes: z.string().optional(),
@@ -226,11 +252,21 @@ export const feedingSchema = z.object({
   reviewDate: z.string().optional().nullable(),
   status: z.enum(['ACTIVE', 'PAUSED', 'FINISHED']).optional(),
   meals: z.array(feedingMealSchema).optional(),
+}).superRefine((data, ctx) => {
+  if (data.meals && data.meals.length !== data.mealsPerDay) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['mealsPerDay'],
+      message: DIET_LIMIT_MESSAGES.mealsMismatch,
+    });
+  }
 });
 
 export const feedingLogSchema = z.object({
   mealId: z.string().min(1),
-  scheduledDate: z.string().min(1),
+  scheduledDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha debe tener el formato AAAA-MM-DD'),
   status: z.enum(['EATEN', 'PENDING', 'UNLOGGED', 'PARTIAL']),
   reason: z.enum(['NORMAL', 'LESS', 'REFUSED', 'SKIPPED', 'OTHER']).optional().nullable(),
   notes: z.string().max(2000).optional().nullable(),
@@ -242,9 +278,21 @@ export const favoriteSchema = z.object({
 });
 
 export const dietSchema = z.object({
-  weightKg: z.number().positive(),
-  mealsPerDay: z.number().int().positive().optional(),
-  activityFactor: z.number().positive().optional(),
+  weightKg: z
+    .number()
+    .min(DIET_LIMITS.weightKgMin, DIET_LIMIT_MESSAGES.weight)
+    .max(DIET_LIMITS.weightKgMax, DIET_LIMIT_MESSAGES.weight),
+  mealsPerDay: z
+    .number()
+    .int(DIET_LIMIT_MESSAGES.meals)
+    .min(DIET_LIMITS.mealsPerDayMin, DIET_LIMIT_MESSAGES.meals)
+    .max(DIET_LIMITS.mealsPerDayMax, DIET_LIMIT_MESSAGES.meals)
+    .optional(),
+  activityFactor: z
+    .number()
+    .min(DIET_LIMITS.activityFactorMin, DIET_LIMIT_MESSAGES.activity)
+    .max(DIET_LIMITS.activityFactorMax, DIET_LIMIT_MESSAGES.activity)
+    .optional(),
   vetNotes: z.string().optional(),
   species: z.string().optional(),
   objective: z.string().optional(),
@@ -311,7 +359,20 @@ export const rejectAppointmentSchema = z.object({
 });
 
 export const updateAppointmentSchema = createAppointmentSchema.partial().extend({
-  status: z.string().optional(),
+  status: z
+    .string()
+    .transform((value, ctx) => {
+      const canonical = canonicalAppointmentStatus(value);
+      if (!canonical) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Estado de cita no válido',
+        });
+        return z.NEVER;
+      }
+      return canonical;
+    })
+    .optional(),
   patientId: z.string().min(1).nullable().optional(),
 });
 

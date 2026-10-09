@@ -7,7 +7,7 @@ export class RefreshTokenStore {
     const raw = generateOpaqueToken(48);
     const tokenHash = hashToken(raw);
     const expiresAt = new Date(Date.now() + env.jwtRefreshDays * 24 * 60 * 60 * 1000);
-    await prisma.refreshToken.create({
+    const row = await prisma.refreshToken.create({
       data: {
         userId,
         tokenHash,
@@ -16,21 +16,37 @@ export class RefreshTokenStore {
         ip: meta?.ip ?? null,
       },
     });
-    return { refreshToken: raw, expiresAt };
+    return { id: row.id, refreshToken: raw, expiresAt };
   }
 
   async rotate(rawToken: string, meta?: { userAgent?: string; ip?: string }) {
     const tokenHash = hashToken(rawToken);
-    const existing = await prisma.refreshToken.findUnique({ where: { tokenHash } });
-    if (!existing || existing.revokedAt || existing.expiresAt < new Date()) {
-      return null;
-    }
-    await prisma.refreshToken.update({
-      where: { id: existing.id },
-      data: { revokedAt: new Date() },
+    const raw = generateOpaqueToken(48);
+    const nextHash = hashToken(raw);
+    const expiresAt = new Date(Date.now() + env.jwtRefreshDays * 24 * 60 * 60 * 1000);
+
+    const rotated = await prisma.$transaction(async (tx) => {
+      const consumed = await tx.refreshToken.updateMany({
+        where: { tokenHash, revokedAt: null, expiresAt: { gt: new Date() } },
+        data: { revokedAt: new Date() },
+      });
+      if (consumed.count !== 1) return null;
+      const existing = await tx.refreshToken.findUnique({ where: { tokenHash } });
+      if (!existing) return null;
+      const created = await tx.refreshToken.create({
+        data: {
+          userId: existing.userId,
+          tokenHash: nextHash,
+          expiresAt,
+          userAgent: meta?.userAgent ?? null,
+          ip: meta?.ip ?? null,
+        },
+      });
+      return { userId: existing.userId, id: created.id };
     });
-    const next = await this.issue(existing.userId, meta);
-    return { userId: existing.userId, ...next };
+
+    if (!rotated) return null;
+    return { userId: rotated.userId, id: rotated.id, refreshToken: raw, expiresAt };
   }
 
   async revoke(rawToken: string): Promise<boolean> {
@@ -42,9 +58,13 @@ export class RefreshTokenStore {
     return result.count > 0;
   }
 
-  async revokeAllForUser(userId: string): Promise<void> {
+  async revokeAllForUser(userId: string, exceptId?: string): Promise<void> {
     await prisma.refreshToken.updateMany({
-      where: { userId, revokedAt: null },
+      where: {
+        userId,
+        revokedAt: null,
+        ...(exceptId ? { id: { not: exceptId } } : {}),
+      },
       data: { revokedAt: new Date() },
     });
   }

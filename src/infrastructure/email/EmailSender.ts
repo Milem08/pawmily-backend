@@ -13,11 +13,10 @@ export class EmailSender {
     options?: { attachments?: EmailAttachment[] },
   ): Promise<{ delivered: boolean }> {
     const attachments = options?.attachments ?? [];
-    if (!env.resendApiKey) {
+    if (!process.env.RESEND_API_KEY) {
       console.info('[email:dev]', {
         to,
         subject,
-        text,
         attachments: attachments.map((item) => item.filename),
       });
       return { delivered: false };
@@ -25,7 +24,7 @@ export class EmailSender {
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${env.resendApiKey}`,
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -37,8 +36,8 @@ export class EmailSender {
       }),
     });
     if (!res.ok) {
-      const body = await res.text();
-      console.error('[email:error]', res.status, body);
+      await res.text();
+      console.error('[email:error]', res.status);
       return { delivered: false };
     }
     return { delivered: true };

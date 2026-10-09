@@ -12,17 +12,13 @@ export function createApp() {
   const app = express();
   const container = createContainer();
 
+  app.set('trust proxy', env.trustProxyHops);
   app.use(helmet());
   app.use(
     cors({
       origin(origin, callback) {
         if (!origin) return callback(null, true);
-        const allowed =
-          !env.corsOrigins.length ||
-          env.corsOrigins.includes(origin) ||
-          env.corsOrigins.includes('*') ||
-          /^https:\/\/[\w-]+\.vercel\.app$/i.test(origin);
-        callback(null, allowed);
+        callback(null, env.corsOrigins.includes(origin));
       },
       credentials: true,
     }),

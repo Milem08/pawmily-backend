@@ -19,16 +19,17 @@ export class IssueSession {
     user: { id: string; email: string; role: 'vet' | 'owner' },
     meta?: { userAgent?: string; ip?: string },
   ) {
+    const issued = await this.refreshStore.issue(user.id, meta);
     const accessToken = this.tokens.sign({
       sub: user.id,
       email: user.email,
       role: user.role,
+      sid: issued.id,
     });
-    const { refreshToken, expiresAt } = await this.refreshStore.issue(user.id, meta);
     return {
       accessToken,
-      refreshToken,
-      refreshExpiresAt: expiresAt,
+      refreshToken: issued.refreshToken,
+      refreshExpiresAt: issued.expiresAt,
       tokenType: 'Bearer' as const,
       expiresIn: env.jwtAccessExpiration,
     };
@@ -56,6 +57,7 @@ export class RefreshSession {
       sub: user.id,
       email: user.email,
       role: user.role,
+      sid: rotated.id,
     });
     await this.audit.log({
       actorId: user.id,

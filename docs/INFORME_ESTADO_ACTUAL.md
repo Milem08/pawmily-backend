@@ -38,7 +38,7 @@ App Android (owner)  ──JWT──►       ▲
 
 ## 3. Base de datos (Supabase)
 
-Proyecto: `ghkrlpebwqqdynqmmsbv` · tablas públicas verificadas:
+Proyecto: `your-project-ref` · tablas públicas verificadas:
 
 | Tabla | # columnas (aprox.) | Contenido clave |
 |-------|---------------------|-----------------|

@@ -21,6 +21,10 @@ npm run dev
 
 Health: `GET http://localhost:3000/api/health`
 
+Clinic dates and clock times use `APP_TZ` (default `America/El_Salvador`), including when the server clock is UTC.
+
+`consultation_number_seq` is not in `schema.prisma`. `prisma db push` does not create it, and Railway does not run SQL migrations (`railway.toml` only builds and starts). The API creates that sequence automatically when it is missing, starting after the highest existing `CONS-` number.
+
 ## Scripts
 
 | Script | Description |
@@ -28,7 +32,7 @@ Health: `GET http://localhost:3000/api/health`
 | `npm run dev` | Watch mode |
 | `npm run build` / `npm start` | Production |
 | `npm test` | Unit + health integration |
-| `npx prisma db push` | Sync schema to DB |
+| `npx prisma db push` | Sync Prisma models to the DB. Does not create `consultation_number_seq` |
 
 ## Deploy (Railway)
 

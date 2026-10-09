@@ -6,6 +6,7 @@ import {
   markAllClinicMessagesRead,
   markClinicMessageRead,
 } from '../../../application/inbox/ClinicInbox';
+import { parseLimit } from '../queryPaging';
 
 export function inboxRoutes(container: Container): Router {
   const router = Router();
@@ -15,7 +16,7 @@ export function inboxRoutes(container: Container): Router {
   router.get('/', async (req, res, next) => {
     try {
       const unreadOnly = String(req.query.unreadOnly || '') === 'true';
-      const limit = Number(req.query.limit ?? 50);
+      const limit = parseLimit(req.query.limit, 50);
       const messages = await listClinicMessagesForUser(req.user!.id, { unreadOnly, limit });
       res.json({ data: messages });
     } catch (err) {

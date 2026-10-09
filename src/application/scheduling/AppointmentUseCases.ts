@@ -5,6 +5,15 @@ import { buildReminderNotificationMessage } from '../../domain/patients/Notifica
 import { Role } from '../../domain/identity/Role';
 import { createClinicMessage, resolveAppointmentMessages } from '../inbox/ClinicInbox';
 import { Appointment } from '../../domain/scheduling/Appointment';
+import {
+  canonicalAppointmentStatus,
+  lastProposalBy,
+  notesPreservingInternalTags,
+  occupiesAppointmentSlot,
+  stripInternalTags,
+} from '../../domain/scheduling/appointmentNotes';
+import { assertBookableAppointmentSlot } from './appointmentSlot';
+import { todayInBusinessZone } from '../../shared/businessTime';
 
 async function resolveMessagesSafe(
   appointmentId: string,
@@ -39,6 +48,26 @@ async function assertOwnerOfPatient(
   const accessible = await patients.findByOwner(actor.id, { page: 1, limit: 500 });
   if (!accessible.items.some((p) => p.id === patientId)) {
     throw new DomainError('No autorizado', 403);
+  }
+}
+
+/** Dueño o co-dueño. Un cuidador no puede aceptar, rechazar ni cancelar. */
+async function assertOwnerOrCoOwner(
+  patients: PatientRepository,
+  actor: AuthActor,
+  patientId: string,
+) {
+  if (actor.role !== 'owner') {
+    throw new DomainError('Solo dueños pueden realizar esta acción', 403);
+  }
+  const accessible = await patients.findByOwner(actor.id, { page: 1, limit: 500 });
+  const match = accessible.items.find((p) => p.id === patientId);
+  if (!match) {
+    throw new DomainError('No autorizado', 403);
+  }
+  const role = String(match.props.accessRole || '').toUpperCase();
+  if (role !== 'OWNER' && role !== 'CO_OWNER') {
+    throw new DomainError('Solo el dueño o un co-dueño puede realizar esta acción', 403);
   }
 }
 
@@ -96,6 +125,7 @@ async function ensureCitaReminder(
   patients: PatientRepository,
   actorId: string,
   appointment: Appointment,
+  options: { create?: boolean } = {},
 ) {
   const patientId = appointment.patientId;
   if (!patientId) return;
@@ -110,16 +140,37 @@ async function ensureCitaReminder(
     date,
     time,
   });
-  await patients.addReminder(patientId, {
+  const existing = (await patients.listReminders(patientId)).filter(
+    (rem) => rem.appointmentId === appointment.id,
+  );
+  if (!existing.length) {
+    if (options.create === false) return;
+    await patients.addReminder(patientId, {
+      title: `Cita: ${petName}`,
+      date,
+      time,
+      type: 'cita',
+      category: 'cita',
+      appointmentId: appointment.id,
+      createdByUserId: actorId,
+      notificationMessage,
+    });
+    return;
+  }
+  const [keep, ...duplicates] = existing;
+  await patients.updateReminder(keep.id, {
     title: `Cita: ${petName}`,
     date,
     time,
     type: 'cita',
     category: 'cita',
-    appointmentId: appointment.id,
-    createdByUserId: actorId,
     notificationMessage,
+    completed: false,
+    completedAt: null,
   });
+  for (const extra of duplicates) {
+    await patients.deleteReminder(extra.id);
+  }
 }
 
 /** Resolve owner user ids for a patient (ownerUserId + active accessors). */
@@ -161,6 +212,7 @@ export class CreateAppointment {
     },
   ) {
     assertVet(actor);
+    assertBookableAppointmentSlot(data.date, data.time);
 
     let petName = data.petName;
     let ownerName = data.ownerName;
@@ -178,10 +230,10 @@ export class CreateAppointment {
     // Linked to a patient: propose to owner (Solicitada) until they accept.
     // Unlinked: schedule immediately for clinic-only calendar entries.
     const status = patientId ? 'Solicitada' : 'Programada';
-    const notesBase = data.notes?.trim() || '';
+    const notesBase = stripInternalTags(data.notes ?? '');
     const notes = patientId
       ? `${notesBase ? notesBase + '\n' : ''}[Propuesta vet]`.trim()
-      : data.notes;
+      : notesBase || null;
 
     const appointment = await this.appointments.create({
       petName,
@@ -197,7 +249,7 @@ export class CreateAppointment {
 
     if (patientId) {
       const owners = await ownerRecipientIds(this.patients, patientId);
-      const reason = reasonFromNotes(appointment.props.notes) || data.notes?.trim() || 'Cita propuesta por la clínica';
+      const reason = reasonFromNotes(appointment.props.notes) || notesBase || 'Cita propuesta por la clínica';
       for (const userId of owners) {
         await notifySafe({
           userId,
@@ -241,13 +293,11 @@ export class ListMyAppointments {
     if (!ids.length) {
       return { items: [], total: 0 };
     }
-    const result = await this.appointments.findByPatientIds(ids, { page, limit });
-    // Hide unfinished negotiation (Solicitada) — owner acts via Inbox/Correo only.
-    const active = result.items.filter((a) => {
-      const s = (a.props.status || '').toLowerCase();
-      return s !== 'eliminada' && s !== 'cancelada' && s !== 'solicitada';
+    return this.appointments.findByPatientIds(ids, {
+      page,
+      limit,
+      excludeStatuses: ['cancelada', 'eliminada'],
     });
-    return { items: active, total: active.length };
   }
 }
 
@@ -267,11 +317,8 @@ export class ConfirmAppointmentAttendance {
     }
     await assertOwnerOfPatient(this.patients, actor, appointment.patientId);
     const status = (appointment.props.status || '').toLowerCase();
-    if (status === 'solicitada' || status === 'eliminada' || status === 'cancelada') {
-      throw new DomainError('Esta cita aún no está programada por la clínica', 400);
-    }
-    if (status === 'confirmada' && appointment.props.attendanceStatus === 'Confirmada') {
-      return appointment;
+    if (status !== 'programada' && status !== 'reagendada') {
+      throw new DomainError('Solo se puede confirmar una cita programada o reagendada', 409);
     }
     const updated = await this.appointments.update(appointmentId, {
       attendanceStatus: 'Confirmada',
@@ -323,8 +370,9 @@ export class RequestAppointment {
     if (!vetId) {
       throw new DomainError('La mascota no tiene veterinario asignado', 400);
     }
+    assertBookableAppointmentSlot(data.date, data.time);
 
-    const reason = data.notes?.trim() || 'Solicitud del dueño';
+    const reason = stripInternalTags(data.notes ?? '') || 'Solicitud del dueño';
     const appointment = await this.appointments.create({
       petName: patient.props.name,
       ownerName: patient.props.ownerName,
@@ -387,43 +435,41 @@ export class AcceptAppointmentRequest {
       if (!appointment.patientId) {
         throw new DomainError('Cita no encontrada', 404);
       }
-      await assertOwnerOfPatient(this.patients, actor, appointment.patientId);
+      await assertOwnerOrCoOwner(this.patients, actor, appointment.patientId);
     } else {
       throw new DomainError('No autorizado', 403);
     }
 
-    const status = (appointment.props.status || '').toLowerCase();
-    if (status === 'eliminada' || status === 'cancelada' || status === 'completada') {
-      throw new DomainError('Esta solicitud ya no se puede aceptar', 400);
+    if (
+      (data.date !== undefined && data.date !== appointment.props.date) ||
+      (data.time !== undefined && data.time !== appointment.props.time)
+    ) {
+      throw new DomainError('No se puede cambiar la fecha ni la hora al aceptar', 409);
     }
 
-    const date = data.date ?? appointment.props.date;
-    const time = data.time ?? appointment.props.time;
-    const notes = data.notes !== undefined ? data.notes : appointment.props.notes;
-    const sameSlot =
-      date === appointment.props.date &&
-      time === appointment.props.time &&
-      (data.notes === undefined || data.notes === appointment.props.notes);
+    const proposedBy = lastProposalBy(appointment.props.notes) ?? 'owner';
+    const actorIsProposer =
+      (proposedBy === 'vet' && actor.role === 'vet') ||
+      (proposedBy === 'owner' && actor.role !== 'vet');
+    if (actorIsProposer) {
+      throw new DomainError('No puedes aceptar tu propia propuesta', 409);
+    }
 
-    // Already scheduled and no slot change → idempotent (avoids Reagendada on double-accept).
-    if (
-      sameSlot &&
-      (status === 'programada' || status === 'confirmada' || status === 'reagendada')
-    ) {
+    const status = (appointment.props.status || '').toLowerCase();
+    if (status === 'eliminada' || status === 'cancelada' || status === 'completada') {
+      throw new DomainError('Esta solicitud ya no se puede aceptar', 409);
+    }
+
+    const date = appointment.props.date;
+    const time = appointment.props.time;
+
+    if (status === 'programada' || status === 'confirmada' || status === 'reagendada') {
       await resolveMessagesSafe(appointmentId, 'accepted');
       return appointment;
     }
 
-    const nextStatus =
-      status === 'programada' || status === 'confirmada' || status === 'reagendada'
-        ? 'Reagendada'
-        : 'Programada';
-
     const updated = await this.appointments.update(appointmentId, {
-      date,
-      time,
-      notes,
-      status: nextStatus,
+      status: 'Programada',
       attendanceStatus: 'Pendiente',
     });
 
@@ -487,18 +533,19 @@ export class RejectAppointmentRequest {
       if (!appointment.patientId) {
         throw new DomainError('Cita no encontrada', 404);
       }
-      await assertOwnerOfPatient(this.patients, actor, appointment.patientId);
+      await assertOwnerOrCoOwner(this.patients, actor, appointment.patientId);
     } else {
       throw new DomainError('No autorizado', 403);
     }
 
     const status = (appointment.props.status || '').toLowerCase();
     if (status === 'eliminada' || status === 'cancelada' || status === 'completada') {
-      throw new DomainError('Esta solicitud ya no se puede rechazar', 400);
+      throw new DomainError('Esta solicitud ya no se puede rechazar', 409);
     }
 
     const prev = appointment.props.notes ? `${appointment.props.notes}\n` : '';
-    const rejectNote = data.notes?.trim() || `Rechazada por ${actor.role}`;
+    const userNote = stripInternalTags(data.notes ?? '');
+    const rejectNote = userNote || `Rechazada por ${actor.role}`;
     const updated = await this.appointments.update(appointmentId, {
       status: 'Cancelada',
       notes: `${prev}[Rechazada] ${rejectNote}`.trim(),
@@ -516,7 +563,7 @@ export class RejectAppointmentRequest {
           type: 'appointment_update',
           title: `Cita rechazada: ${updated.props.petName}`,
           body: `La clínica rechazó la solicitud de cita de ${updated.props.petName} (${updated.props.date} ${updated.props.time}).${
-            data.notes?.trim() ? ` Motivo: ${data.notes.trim()}` : ''
+            userNote ? ` Motivo: ${userNote}` : ''
           }`,
           payload: appointmentPayload(updated, {
             proposedBy: 'vet',
@@ -580,12 +627,14 @@ export class SuggestAppointmentSlot {
     if (status === 'eliminada' || status === 'cancelada' || status === 'completada') {
       throw new DomainError('Esta cita no admite una nueva sugerencia', 400);
     }
+    assertBookableAppointmentSlot(data.date, data.time);
 
     const proposedBy = actor.role === 'vet' ? 'vet' : 'owner';
     const prev = appointment.props.notes ? `${appointment.props.notes}\n` : '';
-    const noteBit = data.notes?.trim()
-      ? data.notes.trim()
-      : `Nueva sugerencia (${appointment.props.date} ${appointment.props.time} → ${data.date} ${data.time})`;
+    const userNote = stripInternalTags(data.notes ?? '');
+    const noteBit =
+      userNote ||
+      `Nueva sugerencia (${appointment.props.date} ${appointment.props.time} → ${data.date} ${data.time})`;
 
     const updated = await this.appointments.update(appointmentId, {
       date: data.date,
@@ -595,6 +644,7 @@ export class SuggestAppointmentSlot {
       ownerConfirmedAt: null,
       notes: `${prev}[Propuesta ${proposedBy}] ${noteBit}`.trim(),
     });
+    await ensureCitaReminder(this.patients, actor.id, updated, { create: false });
 
     // Clear prior action buttons on old messages; new suggest message carries review_appointment.
     await resolveMessagesSafe(appointmentId, 'suggested');
@@ -676,6 +726,7 @@ export class ListAppointments {
     const limit = options.limit && options.limit > 0 ? Math.min(options.limit, 100) : 20;
     return this.appointments.findByVet(actor.id, {
       date: options.date,
+      fromDate: options.date ? undefined : todayInBusinessZone(),
       page,
       limit,
     });
@@ -739,6 +790,27 @@ export class UpdateAppointment {
       next.ownerName = next.ownerName ?? patient.props.ownerName;
     }
 
+    if (typeof next.notes === 'string') {
+      next.notes = notesPreservingInternalTags(appointment.props.notes, next.notes);
+    }
+    if (next.status !== undefined) {
+      const canonical = canonicalAppointmentStatus(next.status);
+      if (!canonical) {
+        throw new DomainError('Estado de cita no válido', 400);
+      }
+      next.status = canonical;
+    }
+    const nextStatus = next.status ?? appointment.props.status;
+    if (
+      (next.date !== undefined || next.time !== undefined) &&
+      occupiesAppointmentSlot(nextStatus)
+    ) {
+      assertBookableAppointmentSlot(
+        next.date ?? appointment.props.date,
+        next.time ?? appointment.props.time,
+      );
+    }
+
     return this.appointments.update(id, next);
   }
 }
@@ -766,7 +838,7 @@ export class DeleteAppointment {
     if (patientId) {
       const reminders = await this.patients.listReminders(patientId);
       for (const rem of reminders) {
-        if (rem.appointmentId === id || (rem.type === 'cita' && rem.date === appointment.props.date)) {
+        if (rem.appointmentId === id) {
           await this.patients.updateReminder(rem.id, {
             completed: true,
             completedAt: new Date(),

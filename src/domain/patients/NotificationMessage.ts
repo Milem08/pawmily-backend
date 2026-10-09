@@ -1,3 +1,5 @@
+import { addCalendarDays, todayInBusinessZone } from '../../shared/businessTime';
+
 export type ReminderMessageInput = {
   type: string;
   title: string;
@@ -8,13 +10,12 @@ export type ReminderMessageInput = {
 };
 
 function isToday(date: string): boolean {
-  return date === new Date().toISOString().slice(0, 10);
+  return date === todayInBusinessZone(new Date());
 }
 
 function isTomorrow(date: string): boolean {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return date === d.toISOString().slice(0, 10);
+  const today = todayInBusinessZone(new Date());
+  return date === addCalendarDays(today, 1);
 }
 
 /** Builds Spanish notification copy for reminders and appointments. */

@@ -1,4 +1,5 @@
 import { DomainError } from '../../../src/domain/shared/DomainError';
+import { DIET_LIMIT_MESSAGES } from '../../../src/domain/patients/DietCalculator';
 import { Patient } from '../../../src/domain/patients/Patient';
 import { PatientRepository } from '../../../src/domain/patients/PatientRepository';
 import { PatientAccessRepository } from '../../../src/domain/access/PatientAccessRepository';
@@ -7,10 +8,15 @@ import {
   GenerateDiet,
   LinkPatientByCode,
 } from '../../../src/application/patients/PatientUseCases';
-import { CreateAppointment } from '../../../src/application/scheduling/AppointmentUseCases';
+import {
+  AcceptAppointmentRequest,
+  CreateAppointment,
+  ListAppointments,
+} from '../../../src/application/scheduling/AppointmentUseCases';
 import { Appointment } from '../../../src/domain/scheduling/Appointment';
 import { AppointmentRepository } from '../../../src/domain/scheduling/AppointmentRepository';
 import { AuditService } from '../../../src/infrastructure/audit/AuditService';
+import { addCalendarDays, todayInBusinessZone } from '../../../src/shared/businessTime';
 
 function makePatient(overrides: Partial<Patient['props']> = {}) {
   return new Patient({
@@ -135,14 +141,54 @@ describe('patient feature use cases', () => {
     expect(feeding.formulaVersion).toBe('rer-mer-v1');
   });
 
-  it('creates appointment reminder of type cita when patientId is set', async () => {
+  it('alinea mealsPerDay con las comidas activas', async () => {
+    const patient = makePatient();
+    const repo = makePatientRepo(patient);
+    (repo.getFeeding as jest.Mock).mockResolvedValue({
+      id: 'f1',
+      petId: 'p1',
+      meals: [
+        { id: 'a', label: 'Desayuno', time: '08:00', sortOrder: 0 },
+        { id: 'b', label: 'Almuerzo', time: '13:00', sortOrder: 1 },
+        { id: 'c', label: 'Cena', time: '19:00', sortOrder: 2 },
+      ],
+    });
+    const uc = new GenerateDiet(repo, makeAccessRepo());
+    const feeding = await uc.execute({ id: 'vet1', role: 'vet' }, 'p1', { weightKg: 10 });
+    expect(feeding.mealsPerDay).toBe(3);
+    expect(repo.upsertFeeding).toHaveBeenCalledWith(
+      'p1',
+      expect.objectContaining({ mealsPerDay: 3 }),
+    );
+  });
+
+  it('rechaza mealsPerDay distinto de las comidas activas sin guardar', async () => {
+    const patient = makePatient();
+    const repo = makePatientRepo(patient);
+    (repo.getFeeding as jest.Mock).mockResolvedValue({
+      id: 'f1',
+      petId: 'p1',
+      meals: [
+        { id: 'a', label: 'Desayuno', time: '08:00', sortOrder: 0 },
+        { id: 'b', label: 'Almuerzo', time: '13:00', sortOrder: 1 },
+        { id: 'c', label: 'Cena', time: '19:00', sortOrder: 2 },
+      ],
+    });
+    const uc = new GenerateDiet(repo, makeAccessRepo());
+    await expect(
+      uc.execute({ id: 'vet1', role: 'vet' }, 'p1', { weightKg: 10, mealsPerDay: 5 }),
+    ).rejects.toMatchObject({ statusCode: 400, message: DIET_LIMIT_MESSAGES.mealsMismatch });
+    expect(repo.upsertFeeding).not.toHaveBeenCalled();
+  });
+
+  it('does not create a cita reminder when the appointment is only requested', async () => {
     const patient = makePatient();
     const patients = makePatientRepo(patient);
     const appointments: AppointmentRepository = {
       create: jest.fn(async (data) =>
         new Appointment({
           id: 'a1',
-          status: 'Programada',
+          status: 'Solicitada',
           ...data,
         }),
       ),
@@ -160,11 +206,46 @@ describe('patient feature use cases', () => {
       {
         petName: 'X',
         ownerName: 'Y',
-        date: '2026-08-01',
+        date: addCalendarDays(todayInBusinessZone(), 30),
         time: '10:00',
         patientId: 'p1',
       },
     );
+
+    expect(patients.addReminder).not.toHaveBeenCalled();
+  });
+
+  it('creates a cita reminder when the appointment is accepted', async () => {
+    const patient = makePatient();
+    const patients = makePatientRepo(patient);
+    const pending = new Appointment({
+      id: 'a1',
+      petName: 'X',
+      ownerName: 'Y',
+      date: '2026-08-01',
+      time: '10:00',
+      status: 'Solicitada',
+      vetId: 'vet1',
+      patientId: 'p1',
+    });
+    const appointments: AppointmentRepository = {
+      create: jest.fn(),
+      findById: jest.fn(async () => pending),
+      findByVet: jest.fn(),
+      findByPatientIds: jest.fn(),
+      findByMonth: jest.fn(),
+      update: jest.fn(async (_id, data) =>
+        new Appointment({
+          ...pending.props,
+          ...data,
+          id: pending.id,
+        }),
+      ),
+      delete: jest.fn(),
+    };
+
+    const uc = new AcceptAppointmentRequest(appointments, patients);
+    await uc.execute({ id: 'vet1', role: 'vet' }, 'a1');
 
     expect(patients.addReminder).toHaveBeenCalledWith(
       'p1',
@@ -175,6 +256,34 @@ describe('patient feature use cases', () => {
         time: '10:00',
       }),
     );
+  });
+
+  it('sin fecha lista desde hoy y con fecha respeta el día pedido', async () => {
+    const findByVet = jest.fn(async () => ({ items: [], total: 0 }));
+    const appointments = {
+      create: jest.fn(),
+      findById: jest.fn(),
+      findByVet,
+      findByPatientIds: jest.fn(),
+      findByMonth: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    } as unknown as AppointmentRepository;
+    const uc = new ListAppointments(appointments);
+    await uc.execute({ id: 'vet1', role: 'vet' }, { limit: 2 });
+    expect(findByVet).toHaveBeenCalledWith('vet1', {
+      date: undefined,
+      fromDate: todayInBusinessZone(),
+      page: 1,
+      limit: 2,
+    });
+    await uc.execute({ id: 'vet1', role: 'vet' }, { date: '2020-01-01', limit: 2 });
+    expect(findByVet).toHaveBeenLastCalledWith('vet1', {
+      date: '2020-01-01',
+      fromDate: undefined,
+      page: 1,
+      limit: 2,
+    });
   });
 
   it('audit service swallows failures', async () => {

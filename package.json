@@ -9,6 +9,9 @@
     "start": "node dist/server.js",
     "test": "jest --runInBand",
     "test:unit": "jest --runInBand tests/unit",
+    "test:unit:utc": "node -r ./tests/setup/tz-utc.cjs ./node_modules/jest/bin/jest.js --runInBand tests/unit",
+    "test:unit:el-salvador": "node -r ./tests/setup/tz-el-salvador.cjs ./node_modules/jest/bin/jest.js --runInBand tests/unit",
+    "test:integration": "jest --runInBand tests/integration",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "prisma:migrate": "prisma migrate dev"

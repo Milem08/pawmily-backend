@@ -1,5 +1,5 @@
 import { DomainError } from '../../domain/shared/DomainError';
-import { calculateDiet } from '../../domain/patients/DietCalculator';
+import { calculateDiet, DIET_LIMIT_MESSAGES } from '../../domain/patients/DietCalculator';
 import { generateSecurePatientCode, Patient } from '../../domain/patients/Patient';
 import {
   CreateMedicalRecordData,
@@ -11,7 +11,9 @@ import {
 } from '../../domain/patients/PatientRepository';
 import { buildReminderNotificationMessage } from '../../domain/patients/NotificationMessage';
 import { visibleRemindersForActor } from '../../domain/patients/ReminderVisibility';
+import { resolveStoredVetNames } from './resolveStoredVetName';
 import { UserRepository } from '../../domain/identity/UserRepository';
+import { businessNow, todayInBusinessZone } from '../../shared/businessTime';
 import { PatientAccessRepository } from '../../domain/access/PatientAccessRepository';
 import {
   authorizePatientAction,
@@ -215,7 +217,7 @@ export class GetPatientByCode {
     }
     const ctx = await resolvePatientAccess(this.patients, this.accesses, actor, patient.id);
     if (!ctx.petRole) {
-      throw new DomainError('No autorizado', 403);
+      throw new DomainError('Paciente no encontrado con ese código', 404);
     }
     return new Patient({
       ...patient.props,
@@ -362,6 +364,7 @@ export class AddMedicalRecord {
     private readonly patients: PatientRepository,
     private readonly accesses: PatientAccessRepository,
     private readonly appointments?: import('../../domain/scheduling/AppointmentRepository').AppointmentRepository,
+    private readonly users?: UserRepository,
   ) {}
 
   async execute(actor: AuthActor, petId: string, data: CreateMedicalRecordData) {
@@ -372,15 +375,16 @@ export class AddMedicalRecord {
       petId,
       'WRITE_CLINICAL',
     );
+    const profile = this.users ? await this.users.findById(actor.id) : null;
+    const profileName = profile?.props.name?.trim() || '';
+    const vetName = data.vetName?.trim() || profileName || actor.id;
     const enriched: CreateMedicalRecordData = {
       ...data,
       type: data.type ?? 'GENERAL',
-      vetName: data.vetName || actor.id,
+      vetName,
       ownerName: data.ownerName ?? patient.props.ownerName,
-      responsibleName: data.responsibleName ?? data.vetName,
-      time:
-        data.time ??
-        new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: false }),
+      responsibleName: data.responsibleName ?? data.vetName ?? vetName,
+      time: data.time ?? businessNow().time,
     };
     let record = await this.patients.addMedicalRecord(petId, enriched);
 
@@ -480,6 +484,7 @@ export class ListMedicalRecords {
   constructor(
     private readonly patients: PatientRepository,
     private readonly accesses: PatientAccessRepository,
+    private readonly users?: UserRepository,
   ) {}
 
   async execute(actor: AuthActor, petId: string) {
@@ -491,14 +496,20 @@ export class ListMedicalRecords {
       'READ_CLINICAL',
     );
     const records = await this.patients.listMedicalRecords(petId);
+    const named = this.users
+      ? await resolveStoredVetNames(records, async (id) => {
+          const user = await this.users!.findById(id);
+          return user?.props.name ?? null;
+        })
+      : records;
     const {
       toOwnerConsultationView,
       toVetConsultationView,
     } = await import('../../domain/patients/ConsultationTypes');
     if (petRole === 'VET' || actor.role === 'vet') {
-      return records.map((r) => toVetConsultationView(r as unknown as Record<string, unknown>));
+      return named.map((r) => toVetConsultationView(r as unknown as Record<string, unknown>));
     }
-    return records.map((r) => toOwnerConsultationView(r as unknown as Record<string, unknown>));
+    return named.map((r) => toOwnerConsultationView(r as unknown as Record<string, unknown>));
   }
 }
 
@@ -530,16 +541,20 @@ export class GenerateDiet {
       petId,
       'WRITE_FEEDING',
     );
+    const existing = await this.patients.getFeeding(petId);
+    const activeMeals = existing?.meals?.length ?? 0;
+    if (activeMeals > 0 && data.mealsPerDay != null && data.mealsPerDay !== activeMeals) {
+      throw new DomainError(DIET_LIMIT_MESSAGES.mealsMismatch, 400);
+    }
     const diet = calculateDiet({
       weightKg: data.weightKg,
-      mealsPerDay: data.mealsPerDay,
+      mealsPerDay: activeMeals > 0 ? activeMeals : data.mealsPerDay,
       activityFactor: data.activityFactor,
       vetNotes: data.vetNotes,
       species: data.species ?? patient.props.species,
     });
 
-    const existing = await this.patients.getFeeding(petId);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayInBusinessZone();
 
     return this.patients.upsertFeeding(petId, {
       recommendedAmount: diet.recommendedAmount,
@@ -580,7 +595,7 @@ export class UpdateFeeding {
   async execute(actor: AuthActor, petId: string, data: UpsertFeedingData) {
     await authorizePatientAction(this.patients, this.accesses, actor, petId, 'WRITE_FEEDING');
     const existing = await this.patients.getFeeding(petId);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayInBusinessZone();
     const feeding = await this.patients.upsertFeeding(petId, {
       ...data,
       startDate: data.startDate ?? existing?.startDate ?? today,
@@ -640,6 +655,19 @@ export class AddReminder {
     // CAREGIVER: read + notify only (cannot create)
     if (petRole === 'CAREGIVER') {
       throw new DomainError('Los cuidadores no pueden crear recordatorios', 403);
+    }
+
+    if ((data.priority ?? '').toLowerCase() === 'alta') {
+      const siblings = await this.patients.listReminders(petId);
+      const altaCount = siblings.filter(
+        (reminder) => (reminder.priority ?? '').toLowerCase() === 'alta',
+      ).length;
+      if (altaCount >= 3) {
+        throw new DomainError(
+          'Ya hay 3 recordatorios prioritarios para esta mascota',
+          409,
+        );
+      }
     }
 
     const notificationMessage = buildReminderNotificationMessage({

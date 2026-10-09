@@ -45,4 +45,4 @@ El backend usa connection string privilegiada; clientes no deben usar la anon ke
 ## Acción requerida del operador
 
 Actualizar `.env` `DATABASE_URL` al host real:
-`db.ghkrlpebwqqdynqmmsbv.supabase.co` + password de Database Settings + `?sslmode=require`.
+`db.your-project-ref.supabase.co` + password de Database Settings + `?sslmode=require`.
