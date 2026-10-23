@@ -55,7 +55,9 @@ describe('BE-24 entradas inválidas', () => {
       .set('Content-Type', 'application/json')
       .send(payload);
     expect(res.status).toBe(413);
-    expect(res.body.message).toMatch(/2 MB/);
+    expect(res.body.message).toBe(
+      'La imagen es demasiado pesada (máx. 1.5 MB). Reduce su tamaño e inténtalo de nuevo.',
+    );
   });
 
   it('responde 400 cuando el JSON está malformado', async () => {

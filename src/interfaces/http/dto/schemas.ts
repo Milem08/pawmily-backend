@@ -68,7 +68,7 @@ export const loginSchema = z
   .object({
     email: emailField().optional(),
     phone: z.string().min(5).max(LIMIT.phone, lengthMessage('teléfono', LIMIT.phone)).optional(),
-    password: passwordField(1),
+    password: passwordField(1, 'contraseña', LIMIT.existingPassword),
   })
   .refine((d) => Boolean(d.email || d.phone), {
     message: 'Email or phone is required',
@@ -84,7 +84,7 @@ export const updateProfileSchema = z.object({
   photo: z.string().optional(),
   photoUrl: z.string().optional(),
   password: passwordField(6).optional(),
-  currentPassword: passwordField(1, 'contraseña actual').optional(),
+  currentPassword: passwordField(1, 'contraseña actual', LIMIT.existingPassword).optional(),
 });
 
 const feedingMealTimeSchema = z

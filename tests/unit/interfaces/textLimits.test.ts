@@ -3,9 +3,12 @@ import {
   clinicMessageSchema,
   createPatientSchema,
   linkPatientSchema,
+  loginSchema,
   medicalRecordSchema,
+  passwordResetConfirmSchema,
   registerSchema,
   reminderSchema,
+  updateProfileSchema,
   requestAppointmentSchema,
   updateConfigSchema,
 } from '../../../src/interfaces/http/dto/schemas';
@@ -72,6 +75,37 @@ describe('límites de texto', () => {
     if (!over.success) {
       expect(over.error.errors.map((issue) => issue.message).join('; ')).toContain('72');
     }
+  });
+
+  it('el login y la contraseña actual aceptan más de 72 y cortan en 1024', () => {
+    const legacy = 'a'.repeat(73);
+    const wide = 'a'.repeat(1024);
+    const abuse = 'a'.repeat(1025);
+    const login = { email: 'ana@example.com' };
+
+    expect(loginSchema.safeParse({ ...login, password: legacy }).success).toBe(true);
+    expect(loginSchema.safeParse({ ...login, password: wide }).success).toBe(true);
+    const loginOver = loginSchema.safeParse({ ...login, password: abuse });
+    expect(loginOver.success).toBe(false);
+    if (!loginOver.success) {
+      const message = loginOver.error.errors.map((issue) => issue.message).join('; ');
+      expect(message).toContain('«contraseña»');
+      expect(message).toContain('1024');
+    }
+
+    expect(updateProfileSchema.safeParse({ currentPassword: legacy, password: '123456' }).success).toBe(true);
+    expect(updateProfileSchema.safeParse({ currentPassword: wide, password: '123456' }).success).toBe(true);
+    const currentOver = updateProfileSchema.safeParse({ currentPassword: abuse, password: '123456' });
+    expect(currentOver.success).toBe(false);
+    if (!currentOver.success) {
+      const message = currentOver.error.errors.map((issue) => issue.message).join('; ');
+      expect(message).toContain('«contraseña actual»');
+      expect(message).toContain('1024');
+    }
+
+    expect(updateProfileSchema.safeParse({ password: 'a'.repeat(73), currentPassword: 'actual1' }).success).toBe(false);
+    expect(passwordResetConfirmSchema.safeParse({ token: 'a'.repeat(20), password: 'a'.repeat(73) }).success).toBe(false);
+    expect(passwordResetConfirmSchema.safeParse({ token: 'a'.repeat(20), password: 'a'.repeat(72) }).success).toBe(true);
   });
 
   it('el teléfono acepta 20 y rechaza 21', () => {

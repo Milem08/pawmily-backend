@@ -13,6 +13,8 @@ export const LIMIT = {
   email: 254,
   phone: 20,
   password: 72,
+  /** Login y contraseña actual: cuentas anteriores pudieron usar más de 72. */
+  existingPassword: 1024,
   address: 200,
   license: 50,
   clinicName: 100,
@@ -41,7 +43,8 @@ export const FIELD_LIMIT_NOTES: Record<string, string> = {
     '50 especie/raza/color (etiqueta corta)',
   email: '254 correo',
   'phone / ownerPhone / clinicPhone': '20 teléfono',
-  'password / currentPassword': '72 contraseña (el mínimo no cambia)',
+  'password nueva (registro, cambio, restablecer)': '72 contraseña (el mínimo no cambia)',
+  'login.password / currentPassword': '1024 tope anti-abuso; no es el máximo de una contraseña nueva',
   'address / clinicAddress / clinicHours': '200 dirección (clinicHours es horario corto)',
   'license / microchip': '50 número de licencia/registro',
   'clinic / clinicName / foodType / brand / meal.label / meal.food': '100 nombre de clínica o de alimento',
@@ -91,8 +94,8 @@ export function optionalEmail(campo: string) {
     .optional();
 }
 
-export function passwordField(min: number, campo = 'contraseña') {
-  return z.string().min(min).max(LIMIT.password, lengthMessage(campo, LIMIT.password));
+export function passwordField(min: number, campo = 'contraseña', max: number = LIMIT.password) {
+  return z.string().min(min).max(max, lengthMessage(campo, max));
 }
 
 const PAYLOAD_STRING_LIMITS: Record<string, { max: number; campo: string }> = {
