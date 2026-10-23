@@ -3,49 +3,95 @@ import { DIET_LIMITS, DIET_LIMIT_MESSAGES } from '../../../domain/patients/DietC
 import { speciesRequiresBreed } from '../../../domain/patients/speciesCatalog';
 import { canonicalMealTime } from '../../../shared/mealTime';
 import { canonicalAppointmentStatus } from '../../../domain/scheduling/appointmentNotes';
+import { validatePhotoValue, PHOTO_EXTERNAL_URL_MESSAGE, isExternalHttpPhoto } from '../../../domain/shared/imageValidation';
+import {
+  LIMIT,
+  emailField,
+  lengthMessage,
+  opt,
+  optNull,
+  optionalEmail,
+  passwordField,
+  refinePayloadStrings,
+  txt,
+} from './textLimits';
+
+export { clinicMessageSchema, parseOptionalSearch } from './textLimits';
+
+function refinePhotoField(photo: unknown, ctx: z.RefinementCtx, path: (string | number)[] = ['photo']): void {
+  const result = validatePhotoValue(photo);
+  if (result.ok) return;
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    path,
+    message: result.message,
+  });
+}
+
+function refineCreatePhotoFields(
+  data: { photo?: unknown; photoUrl?: unknown },
+  ctx: z.RefinementCtx,
+): void {
+  refinePhotoField(data.photo, ctx);
+  const photoUrl = data.photoUrl;
+  if (photoUrl === undefined || photoUrl === null || photoUrl === '') return;
+  if (isExternalHttpPhoto(photoUrl) || (typeof photoUrl === 'string' && /^https?:\/\//i.test(photoUrl.trim()))) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['photoUrl'],
+      message: PHOTO_EXTERNAL_URL_MESSAGE,
+    });
+  }
+}
 
 export const registerSchema = z
   .object({
-    email: z.string().email().optional(),
-    phone: z.string().min(5).optional(),
-    password: z.string().min(6),
-    name: z.string().min(1),
+    email: emailField().optional(),
+    phone: z.string().min(5).max(LIMIT.phone, lengthMessage('teléfono', LIMIT.phone)).optional(),
+    password: passwordField(6),
+    name: txt(LIMIT.personName, 'nombre').min(1),
     role: z.enum(['vet', 'owner']).optional(),
-    clinic: z.string().optional(),
-    address: z.string().optional(),
-    license: z.string().optional(),
+    clinic: opt(LIMIT.clinicName, 'clínica'),
+    address: opt(LIMIT.address, 'dirección'),
+    license: opt(LIMIT.license, 'licencia'),
     photo: z.string().optional(),
+    photoUrl: z.string().optional(),
   })
   .refine((d) => Boolean(d.email || d.phone), {
     message: 'Email or phone is required',
+  })
+  .superRefine((data, ctx) => {
+    refineCreatePhotoFields(data, ctx);
   });
 
 export const loginSchema = z
   .object({
-    email: z.string().email().optional(),
-    phone: z.string().min(5).optional(),
-    password: z.string().min(1),
+    email: emailField().optional(),
+    phone: z.string().min(5).max(LIMIT.phone, lengthMessage('teléfono', LIMIT.phone)).optional(),
+    password: passwordField(1, 'contraseña', LIMIT.existingPassword),
   })
   .refine((d) => Boolean(d.email || d.phone), {
     message: 'Email or phone is required',
   });
 
 export const updateProfileSchema = z.object({
-  name: z.string().min(1).optional(),
-  email: z.string().email().optional(),
-  phone: z.string().optional(),
-  clinic: z.string().optional(),
-  address: z.string().optional(),
-  license: z.string().optional(),
+  name: txt(LIMIT.personName, 'nombre').min(1).optional(),
+  email: emailField().optional(),
+  phone: opt(LIMIT.phone, 'teléfono'),
+  clinic: opt(LIMIT.clinicName, 'clínica'),
+  address: opt(LIMIT.address, 'dirección'),
+  license: opt(LIMIT.license, 'licencia'),
   photo: z.string().optional(),
-  password: z.string().min(6).optional(),
-  currentPassword: z.string().min(1).optional(),
+  photoUrl: z.string().optional(),
+  password: passwordField(6).optional(),
+  currentPassword: passwordField(1, 'contraseña actual', LIMIT.existingPassword).optional(),
 });
 
 const feedingMealTimeSchema = z
   .string()
   .trim()
   .min(1, 'Hora de comida no reconocida')
+  .max(LIMIT.dateTime, lengthMessage('hora', LIMIT.dateTime))
   .transform((value, ctx) => {
     const canon = canonicalMealTime(value);
     if (!canon) {
@@ -56,12 +102,12 @@ const feedingMealTimeSchema = z
   });
 
 const feedingMealSchema = z.object({
-  id: z.string().min(1).optional(),
-  label: z.string().min(1),
+  id: txt(LIMIT.identifier, 'identificador').min(1).optional(),
+  label: txt(LIMIT.itemName, 'comida').min(1),
   time: feedingMealTimeSchema,
-  amount: z.string().optional().nullable(),
-  food: z.string().optional().nullable(),
-  notes: z.string().optional().nullable(),
+  amount: optNull(LIMIT.dose, 'cantidad'),
+  food: optNull(LIMIT.itemName, 'alimento'),
+  notes: optNull(LIMIT.notes, 'notas'),
   sortOrder: z.number().int().optional(),
 });
 
@@ -77,42 +123,43 @@ export const consultationTypeSchema = z.enum([
 ]);
 
 const patientCreateObject = z.object({
-  name: z.string().min(1),
-  species: z.string().min(1),
-  breed: z.string().optional(),
-  age: z.string().min(1),
-  sex: z.string().min(1),
-  weight: z.string().optional(),
-  color: z.string().optional(),
-  microchip: z.string().optional(),
-  ownerName: z.string().min(1),
-  ownerPhone: z.string().optional(),
-  ownerEmail: z.string().email().optional().or(z.literal('')),
+  name: txt(LIMIT.petName, 'nombre de la mascota').min(1),
+  species: txt(LIMIT.trait, 'especie').min(1),
+  breed: opt(LIMIT.trait, 'raza'),
+  age: txt(LIMIT.trait, 'edad').min(1),
+  sex: txt(LIMIT.trait, 'sexo').min(1),
+  weight: opt(LIMIT.dose, 'peso'),
+  color: opt(LIMIT.trait, 'color'),
+  microchip: opt(LIMIT.license, 'microchip'),
+  ownerName: txt(LIMIT.personName, 'nombre del propietario').min(1),
+  ownerPhone: opt(LIMIT.phone, 'teléfono'),
+  ownerEmail: optionalEmail('correo del propietario'),
   photo: z.string().optional(),
+  photoUrl: z.string().optional(),
   feeding: z
     .object({
-      recommendedAmount: z.string().min(1),
+      recommendedAmount: txt(LIMIT.dose, 'cantidad').min(1),
       mealsPerDay: z.number().int().positive(),
-      specialInstructions: z.string().optional(),
-      allowedFoods: z.string().optional(),
-      forbiddenFoods: z.string().optional(),
-      vetRecommendations: z.string().optional(),
+      specialInstructions: opt(LIMIT.notes, 'indicaciones'),
+      allowedFoods: opt(LIMIT.notes, 'alimentos permitidos'),
+      forbiddenFoods: opt(LIMIT.notes, 'alimentos prohibidos'),
+      vetRecommendations: opt(LIMIT.notes, 'recomendaciones'),
       meals: z.array(feedingMealSchema).optional(),
     })
     .optional(),
   firstConsultation: z
     .object({
       type: consultationTypeSchema.optional(),
-      reason: z.string().min(1),
-      diagnosis: z.string().optional(),
-      treatment: z.string().optional(),
-      weightAtVisit: z.string().optional(),
-      temperature: z.string().optional(),
-      observations: z.string().optional(),
-      medication: z.string().optional(),
+      reason: txt(LIMIT.appointmentReason, 'motivo').min(1),
+      diagnosis: opt(LIMIT.notes, 'diagnóstico'),
+      treatment: opt(LIMIT.notes, 'tratamiento'),
+      weightAtVisit: opt(LIMIT.dose, 'peso'),
+      temperature: opt(LIMIT.dose, 'temperatura'),
+      observations: opt(LIMIT.notes, 'observaciones'),
+      medication: opt(LIMIT.itemName, 'medicamento'),
       typePayload: z.record(z.unknown()).optional(),
-      followUpDate: z.string().optional(),
-      followUpTime: z.string().optional(),
+      followUpDate: opt(LIMIT.dateTime, 'fecha'),
+      followUpTime: opt(LIMIT.dateTime, 'hora'),
     })
     .optional(),
 });
@@ -127,6 +174,8 @@ export const createPatientSchema = patientCreateObject.superRefine((data, ctx) =
       message: 'La raza es obligatoria para esta especie',
     });
   }
+  refineCreatePhotoFields(data, ctx);
+  refinePayloadStrings(data.firstConsultation?.typePayload, ctx, ['firstConsultation', 'typePayload']);
 });
 
 export const updatePatientSchema = patientCoreSchema.partial().superRefine((data, ctx) => {
@@ -140,116 +189,125 @@ export const updatePatientSchema = patientCoreSchema.partial().superRefine((data
 });
 
 export const linkPatientSchema = z.object({
-  code: z.string().min(1),
+  code: txt(LIMIT.patientCode, 'código').min(1),
 });
 
 export const linkRequestSchema = z.object({
-  code: z.string().min(1),
+  code: txt(LIMIT.patientCode, 'código').min(1),
   requestedRole: z.enum(['OWNER', 'CO_OWNER', 'CAREGIVER']).optional(),
 });
 
 export const refreshSchema = z.object({
-  refreshToken: z.string().min(10),
+  refreshToken: txt(LIMIT.refreshToken, 'token de sesión').min(10),
 });
 
 export const logoutSchema = z.object({
-  refreshToken: z.string().min(10).optional(),
+  refreshToken: txt(LIMIT.refreshToken, 'token de sesión').min(10).optional(),
 });
 
 export const passwordResetRequestSchema = z.object({
-  email: z.string().email(),
+  email: emailField(),
 });
 
 export const passwordResetConfirmSchema = z.object({
-  token: z.string().min(10),
-  password: z.string().min(6),
+  token: txt(LIMIT.identifier, 'token').min(10),
+  password: passwordField(6),
 });
 
 export const emailVerifyConfirmSchema = z.object({
-  token: z.string().min(10),
+  token: txt(LIMIT.identifier, 'token').min(10),
 });
 
 export const mediaUploadUrlSchema = z.object({
-  patientId: z.string().min(1).optional(),
-  mimeType: z.string().min(3),
+  patientId: txt(LIMIT.identifier, 'identificador').min(1).optional(),
+  mimeType: txt(LIMIT.trait, 'tipo de archivo').min(3),
   sizeBytes: z.number().int().positive(),
   kind: z.enum(['pet', 'clinical', 'user_avatar']).optional(),
 });
 
 export const mediaConfirmSchema = z.object({
-  assetId: z.string().min(1),
+  assetId: txt(LIMIT.identifier, 'identificador').min(1),
   setAsPatientPhoto: z.boolean().optional(),
   setAsUserPhoto: z.boolean().optional(),
 });
 
-export const medicalRecordSchema = z.object({
-  date: z.string().min(1),
-  time: z.string().optional(),
-  reason: z.string().min(1),
-  diagnosis: z.string().optional(),
-  treatment: z.string().optional(),
-  vetName: z.string().min(1).optional(),
-  ownerName: z.string().optional(),
-  responsibleName: z.string().optional(),
-  status: z.string().optional(),
+const medicalRecordObject = z.object({
+  date: txt(LIMIT.dateTime, 'fecha').min(1),
+  time: opt(LIMIT.dateTime, 'hora'),
+  reason: txt(LIMIT.appointmentReason, 'motivo').min(1),
+  diagnosis: opt(LIMIT.notes, 'diagnóstico'),
+  treatment: opt(LIMIT.notes, 'tratamiento'),
+  vetName: txt(LIMIT.personName, 'nombre').min(1).optional(),
+  ownerName: opt(LIMIT.personName, 'nombre del propietario'),
+  responsibleName: opt(LIMIT.personName, 'nombre'),
+  status: opt(LIMIT.trait, 'estado'),
   type: consultationTypeSchema.optional(),
-  weightAtVisit: z.string().optional(),
-  temperature: z.string().optional(),
-  heartRate: z.string().optional(),
-  respiratoryRate: z.string().optional(),
-  physicalExam: z.string().optional(),
-  prescriptions: z.string().optional(),
-  medication: z.string().optional(),
-  results: z.string().optional(),
-  observations: z.string().optional(),
-  notes: z.string().optional(),
-  privateNotes: z.string().optional(),
+  weightAtVisit: opt(LIMIT.dose, 'peso'),
+  temperature: opt(LIMIT.dose, 'temperatura'),
+  heartRate: opt(LIMIT.dose, 'frecuencia cardíaca'),
+  respiratoryRate: opt(LIMIT.dose, 'frecuencia respiratoria'),
+  physicalExam: opt(LIMIT.notes, 'exploración'),
+  prescriptions: opt(LIMIT.notes, 'receta'),
+  medication: opt(LIMIT.itemName, 'medicamento'),
+  results: opt(LIMIT.notes, 'resultados'),
+  observations: opt(LIMIT.notes, 'observaciones'),
+  notes: opt(LIMIT.notes, 'notas'),
+  privateNotes: opt(LIMIT.notes, 'notas privadas'),
   typePayload: z.record(z.unknown()).optional(),
-  followUpDate: z.string().optional(),
-  followUpTime: z.string().optional(),
-  relatedConsultationId: z.string().optional(),
+  followUpDate: opt(LIMIT.dateTime, 'fecha'),
+  followUpTime: opt(LIMIT.dateTime, 'hora'),
+  relatedConsultationId: opt(LIMIT.identifier, 'identificador'),
 });
 
-export const updateMedicalRecordSchema = medicalRecordSchema.partial();
+function withPayloadLimit<T extends z.ZodTypeAny>(schema: T) {
+  return schema.superRefine((data, ctx) => {
+    const payload = (data as { typePayload?: unknown }).typePayload;
+    refinePayloadStrings(payload, ctx, ['typePayload']);
+  });
+}
+
+export const medicalRecordSchema = withPayloadLimit(medicalRecordObject);
+
+export const updateMedicalRecordSchema = withPayloadLimit(medicalRecordObject.partial());
 
 export const scheduleMedicationSchema = z.object({
-  firstDoseDate: z.string().min(1),
-  firstDoseTime: z.string().min(1),
+  firstDoseDate: txt(LIMIT.dateTime, 'fecha').min(1),
+  firstDoseTime: txt(LIMIT.dateTime, 'hora').min(1),
   intervalHours: z.number().int().positive().max(24 * 366).optional(),
   durationDays: z.number().int().positive().max(366).optional(),
 });
 
 export const feedingSchema = z.object({
-  recommendedAmount: z.string().min(1),
+  recommendedAmount: txt(LIMIT.dose, 'cantidad').min(1),
   mealsPerDay: z
     .number()
     .int(DIET_LIMIT_MESSAGES.meals)
     .min(DIET_LIMITS.mealsPerDayMin, DIET_LIMIT_MESSAGES.meals)
     .max(DIET_LIMITS.mealsPerDayMax, DIET_LIMIT_MESSAGES.meals),
-  specialInstructions: z.string().optional(),
-  schedule: z.string().optional(),
+  specialInstructions: opt(LIMIT.notes, 'indicaciones'),
+  schedule: opt(LIMIT.notes, 'horario de alimentación'),
   weightKg: z
     .number()
     .min(DIET_LIMITS.weightKgMin, DIET_LIMIT_MESSAGES.weight)
     .max(DIET_LIMITS.weightKgMax, DIET_LIMIT_MESSAGES.weight)
     .optional(),
   caloriesPerDay: z.number().int().positive().optional(),
-  formulaVersion: z.string().optional(),
-  vetNotes: z.string().optional(),
-  foodType: z.string().optional(),
-  brand: z.string().optional(),
-  quantity: z.string().optional(),
-  frequency: z.string().optional(),
-  restrictions: z.string().optional(),
-  allergies: z.string().optional(),
-  observations: z.string().optional(),
-  vetRecommendations: z.string().optional(),
-  allowedFoods: z.string().optional(),
-  forbiddenFoods: z.string().optional(),
-  objective: z.string().optional().nullable(),
+  formulaVersion: opt(LIMIT.trait, 'versión'),
+  vetNotes: opt(LIMIT.notes, 'notas'),
+  foodType: opt(LIMIT.itemName, 'alimento'),
+  brand: opt(LIMIT.itemName, 'marca'),
+  quantity: opt(LIMIT.dose, 'cantidad'),
+  frequency: opt(LIMIT.dose, 'frecuencia'),
+  restrictions: opt(LIMIT.notes, 'restricciones'),
+  allergies: opt(LIMIT.notes, 'alergias'),
+  observations: opt(LIMIT.notes, 'observaciones'),
+  vetRecommendations: opt(LIMIT.notes, 'recomendaciones'),
+  allowedFoods: opt(LIMIT.notes, 'alimentos permitidos'),
+  forbiddenFoods: opt(LIMIT.notes, 'alimentos prohibidos'),
+  objective: optNull(LIMIT.appointmentReason, 'objetivo'),
   targetWeightKg: z.number().positive().optional().nullable(),
-  startDate: z.string().optional().nullable(),
-  reviewDate: z.string().optional().nullable(),
+  startDate: optNull(LIMIT.dateTime, 'fecha'),
+  reviewDate: optNull(LIMIT.dateTime, 'fecha'),
   status: z.enum(['ACTIVE', 'PAUSED', 'FINISHED']).optional(),
   meals: z.array(feedingMealSchema).optional(),
 }).superRefine((data, ctx) => {
@@ -263,18 +321,18 @@ export const feedingSchema = z.object({
 });
 
 export const feedingLogSchema = z.object({
-  mealId: z.string().min(1),
+  mealId: txt(LIMIT.identifier, 'identificador').min(1),
   scheduledDate: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha debe tener el formato AAAA-MM-DD'),
   status: z.enum(['EATEN', 'PENDING', 'UNLOGGED', 'PARTIAL']),
   reason: z.enum(['NORMAL', 'LESS', 'REFUSED', 'SKIPPED', 'OTHER']).optional().nullable(),
-  notes: z.string().max(2000).optional().nullable(),
+  notes: optNull(LIMIT.notes, 'notas'),
 });
 
 export const favoriteSchema = z.object({
   targetType: z.enum(['REMINDER', 'APPOINTMENT']),
-  targetId: z.string().min(1),
+  targetId: txt(LIMIT.identifier, 'identificador').min(1),
 });
 
 export const dietSchema = z.object({
@@ -293,26 +351,26 @@ export const dietSchema = z.object({
     .min(DIET_LIMITS.activityFactorMin, DIET_LIMIT_MESSAGES.activity)
     .max(DIET_LIMITS.activityFactorMax, DIET_LIMIT_MESSAGES.activity)
     .optional(),
-  vetNotes: z.string().optional(),
-  species: z.string().optional(),
-  objective: z.string().optional(),
+  vetNotes: opt(LIMIT.notes, 'notas'),
+  species: opt(LIMIT.trait, 'especie'),
+  objective: opt(LIMIT.appointmentReason, 'objetivo'),
   targetWeightKg: z.number().positive().optional(),
-  startDate: z.string().optional(),
-  reviewDate: z.string().optional(),
+  startDate: opt(LIMIT.dateTime, 'fecha'),
+  reviewDate: opt(LIMIT.dateTime, 'fecha'),
 });
 
 export const reminderSchema = z.object({
-  title: z.string().min(1),
-  description: z.string().optional(),
-  date: z.string().min(1),
-  time: z.string().optional(),
+  title: txt(LIMIT.subject, 'título').min(1),
+  description: opt(LIMIT.notes, 'descripción'),
+  date: txt(LIMIT.dateTime, 'fecha').min(1),
+  time: opt(LIMIT.dateTime, 'hora'),
   type: z.enum(['recordatorio', 'cita']).optional(),
-  category: z.string().optional(),
+  category: opt(LIMIT.itemName, 'categoría'),
   priority: z.enum(['baja', 'media', 'alta']).optional(),
-  color: z.string().optional(),
-  icon: z.string().optional(),
+  color: opt(LIMIT.trait, 'color'),
+  icon: opt(LIMIT.trait, 'icono'),
   notifyEnabled: z.boolean().optional(),
-  notes: z.string().optional(),
+  notes: opt(LIMIT.notes, 'notas'),
   recurrence: z.enum(['none', 'daily', 'weekly', 'monthly']).optional(),
 });
 
@@ -320,47 +378,49 @@ export const updateReminderSchema = reminderSchema.partial().extend({
   completed: z.boolean().optional(),
 });
 
+const appointmentWhen = {
+  date: txt(LIMIT.dateTime, 'fecha').min(1),
+  time: txt(LIMIT.dateTime, 'hora').min(1),
+};
+
 export const createAppointmentSchema = z.object({
-  petName: z.string().min(1),
-  ownerName: z.string().min(1),
-  date: z.string().min(1),
-  time: z.string().min(1),
-  notes: z.string().optional(),
-  patientId: z.string().min(1).optional(),
+  petName: txt(LIMIT.petName, 'nombre de la mascota').min(1),
+  ownerName: txt(LIMIT.personName, 'nombre del propietario').min(1),
+  ...appointmentWhen,
+  notes: opt(LIMIT.appointmentReason, 'motivo'),
+  patientId: txt(LIMIT.identifier, 'identificador').min(1).optional(),
 });
 
 export const requestAppointmentSchema = z.object({
-  patientId: z.string().min(1),
-  date: z.string().min(1),
-  time: z.string().min(1),
-  notes: z.string().max(2000).optional(),
+  patientId: txt(LIMIT.identifier, 'identificador').min(1),
+  ...appointmentWhen,
+  notes: opt(LIMIT.appointmentReason, 'motivo'),
 });
 
 export const acceptAppointmentSchema = z.object({
-  date: z.string().min(1).optional(),
-  time: z.string().min(1).optional(),
-  notes: z.string().max(2000).optional(),
+  date: txt(LIMIT.dateTime, 'fecha').min(1).optional(),
+  time: txt(LIMIT.dateTime, 'hora').min(1).optional(),
+  notes: opt(LIMIT.appointmentReason, 'motivo'),
 });
 
 export const postponeAppointmentSchema = z.object({
-  date: z.string().min(1),
-  time: z.string().min(1),
-  notes: z.string().max(2000).optional(),
+  ...appointmentWhen,
+  notes: opt(LIMIT.appointmentReason, 'motivo'),
 });
 
 export const suggestAppointmentSchema = z.object({
-  date: z.string().min(1),
-  time: z.string().min(1),
-  notes: z.string().max(2000).optional(),
+  ...appointmentWhen,
+  notes: opt(LIMIT.appointmentReason, 'motivo'),
 });
 
 export const rejectAppointmentSchema = z.object({
-  notes: z.string().max(2000).optional(),
+  notes: opt(LIMIT.appointmentReason, 'motivo'),
 });
 
 export const updateAppointmentSchema = createAppointmentSchema.partial().extend({
   status: z
     .string()
+    .max(LIMIT.trait, lengthMessage('estado', LIMIT.trait))
     .transform((value, ctx) => {
       const canonical = canonicalAppointmentStatus(value);
       if (!canonical) {
@@ -373,20 +433,20 @@ export const updateAppointmentSchema = createAppointmentSchema.partial().extend(
       return canonical;
     })
     .optional(),
-  patientId: z.string().min(1).nullable().optional(),
+  patientId: txt(LIMIT.identifier, 'identificador').min(1).nullable().optional(),
 });
 
 export const updateConfigSchema = z.object({
-  clinicName: z.string().optional(),
-  clinicAddress: z.string().optional(),
-  clinicPhone: z.string().optional(),
-  clinicEmail: z.string().optional(),
-  clinicHours: z.string().optional(),
-  mapUrl: z.string().optional(),
-  language: z.string().optional(),
-  timezone: z.string().optional(),
-  dateFormat: z.string().optional(),
-  theme: z.string().optional(),
+  clinicName: opt(LIMIT.clinicName, 'nombre de la clínica'),
+  clinicAddress: opt(LIMIT.address, 'dirección'),
+  clinicPhone: opt(LIMIT.phone, 'teléfono'),
+  clinicEmail: opt(LIMIT.email, 'correo'),
+  clinicHours: opt(LIMIT.address, 'horario'),
+  mapUrl: opt(LIMIT.mapUrl, 'enlace del mapa'),
+  language: opt(LIMIT.trait, 'idioma'),
+  timezone: opt(LIMIT.trait, 'zona horaria'),
+  dateFormat: opt(LIMIT.trait, 'formato de fecha'),
+  theme: opt(LIMIT.trait, 'tema'),
   notifications: z.boolean().optional(),
   sounds: z.boolean().optional(),
 });

@@ -14,7 +14,7 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
   if (anyErr?.type === 'entity.too.large' || anyErr?.status === 413 || anyErr?.statusCode === 413) {
     return res.status(413).json({
       error: 'PAYLOAD_TOO_LARGE',
-      message: 'El cuerpo de la petición supera el tamaño permitido (2 MB)',
+      message: 'La imagen es demasiado pesada (máx. 1.5 MB). Reduce su tamaño e inténtalo de nuevo.',
     });
   }
 

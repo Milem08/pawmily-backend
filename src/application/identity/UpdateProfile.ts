@@ -1,4 +1,5 @@
 import { DomainError } from '../../domain/shared/DomainError';
+import { photoPayloadForUpdate } from '../../domain/shared/imageValidation';
 import { UserRepository } from '../../domain/identity/UserRepository';
 import { BcryptHasher } from '../../infrastructure/auth/BcryptHasher';
 import { RefreshTokenStore } from '../../infrastructure/auth/RefreshTokenStore';
@@ -11,6 +12,7 @@ export interface UpdateProfileInput {
   address?: string;
   license?: string;
   photo?: string;
+  photoUrl?: string;
   password?: string;
   currentPassword?: string;
 }
@@ -29,9 +31,8 @@ export class UpdateProfile {
     }
 
     const { currentPassword, password, ...rest } = input;
-    const data: Omit<UpdateProfileInput, 'currentPassword' | 'password'> & { password?: string } = {
-      ...rest,
-    };
+    const data: Omit<UpdateProfileInput, 'currentPassword' | 'password'> & { password?: string } =
+      photoPayloadForUpdate({ ...rest }, existing.props.photo);
     if (input.email) {
       const normalized = input.email.trim().toLowerCase();
       const other = await this.users.findByEmail(normalized);
