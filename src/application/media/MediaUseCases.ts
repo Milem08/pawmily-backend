@@ -122,6 +122,9 @@ export class ConfirmMediaUpload {
       throw new DomainError('Asset no encontrado', 404);
     }
 
+    // TODO: descargar los primeros bytes del objeto y rechazar el asset si los
+    // magic bytes no son JPEG, PNG o WebP. /media/upload-url solo valida el mimeType declarado.
+
     if (setAsUserPhoto || asset.kind === 'user_avatar') {
       if (asset.uploadedBy !== actor.id) {
         throw new DomainError('No autorizado', 403);

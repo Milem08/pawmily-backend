@@ -2,7 +2,9 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { env } from '../config/env';
 import { DomainError } from '../../domain/shared/DomainError';
 
-const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+// Solo el mimeType declarado por el cliente (JPG, PNG o WebP). GIF queda fuera.
+// La validación del contenido real (magic bytes) corresponde a confirmMediaUpload.
+const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_BYTES = 5 * 1024 * 1024;
 
 export class SupabaseStorage {
