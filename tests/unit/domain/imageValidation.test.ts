@@ -3,10 +3,12 @@ import { DomainError } from '../../../src/domain/shared/DomainError';
 import {
   detectImageType,
   MAX_PHOTO_BYTES,
+  PHOTO_EXTERNAL_URL_MESSAGE,
   validatePhotoValue,
 } from '../../../src/domain/shared/imageValidation';
 import {
   createPatientSchema,
+  registerSchema,
   updatePatientSchema,
   updateProfileSchema,
 } from '../../../src/interfaces/http/dto/schemas';
@@ -62,13 +64,23 @@ describe('detectImageType', () => {
 });
 
 describe('validatePhotoValue', () => {
-  it('acepta vacío, URL https y asset:<id>', () => {
+  const signed =
+    'https://abc.supabase.co/storage/v1/object/sign/pet-photos/luna.jpg?token=eyJhbGciOiJIUzI1NiJ9.firma';
+
+  it('acepta vacío y asset:<id>, y rechaza una URL http(s)', () => {
     expect(validatePhotoValue(undefined)).toEqual({ ok: true });
     expect(validatePhotoValue(null)).toEqual({ ok: true });
     expect(validatePhotoValue('')).toEqual({ ok: true });
-    expect(validatePhotoValue('https://cdn.example.com/placeholder.png')).toEqual({ ok: true });
-    expect(validatePhotoValue('http://localhost/placeholder.png')).toEqual({ ok: true });
     expect(validatePhotoValue('asset:abc')).toEqual({ ok: true });
+    expect(validatePhotoValue(signed)).toEqual({ ok: false, message: PHOTO_EXTERNAL_URL_MESSAGE });
+    expect(validatePhotoValue('https://cdn.example.com/placeholder.png')).toEqual({
+      ok: false,
+      message: PHOTO_EXTERNAL_URL_MESSAGE,
+    });
+    expect(validatePhotoValue('http://localhost/placeholder.png')).toEqual({
+      ok: false,
+      message: PHOTO_EXTERNAL_URL_MESSAGE,
+    });
   });
 
   it('acepta el placeholder estático de la web sin descargarlo ni convertirlo', () => {
@@ -152,11 +164,43 @@ describe('schemas de foto', () => {
   const exeAsJpeg = dataUrl('image/jpeg', Buffer.from([0x4d, 0x5a, 0x90, 0x00]));
   const validJpeg = dataUrl('image/jpeg', imageBuffer('jpeg'));
 
-  it.each(cases)('$name acepta https, asset y JPG', ({ parse }) => {
-    expect(parse('https://cdn.example.com/placeholder.png').success).toBe(true);
+  it.each(cases)('$name acepta asset y JPG', ({ parse }) => {
     expect(parse('asset:abc').success).toBe(true);
     expect(parse(validJpeg).success).toBe(true);
     expect(parse('').success).toBe(true);
+  });
+
+  it('create rechaza una URL firmada o externa y el update la deja pasar', () => {
+    const signed =
+      'https://abc.supabase.co/storage/v1/object/sign/pet-photos/luna.jpg?token=eyJhbGciOiJIUzI1NiJ9.firma';
+    const external = 'https://cdn.example.com/luna.png?X-Amz-Signature=abc';
+
+    for (const photo of [signed, external]) {
+      const created = createPatientSchema.safeParse({ ...patientBase, photo });
+      expect(created.success).toBe(false);
+      if (!created.success) expect(photoIssue(created.error.issues)).toBe(PHOTO_EXTERNAL_URL_MESSAGE);
+
+      const registered = registerSchema.safeParse({
+        name: 'Ana',
+        email: 'ana@example.com',
+        password: 'secreto1',
+        photo,
+      });
+      expect(registered.success).toBe(false);
+
+      expect(updatePatientSchema.safeParse({ photo }).success).toBe(true);
+      expect(updateProfileSchema.safeParse({ photo }).success).toBe(true);
+    }
+
+    const byAlias = createPatientSchema.safeParse({ ...patientBase, photoUrl: signed });
+    expect(byAlias.success).toBe(false);
+    if (!byAlias.success) {
+      expect(byAlias.error.issues.find((issue) => issue.path[0] === 'photoUrl')?.message).toBe(
+        PHOTO_EXTERNAL_URL_MESSAGE,
+      );
+    }
+    expect(updatePatientSchema.safeParse({ photoUrl: signed, name: 'Luna' }).success).toBe(true);
+    expect(updateProfileSchema.safeParse({ photoUrl: external }).success).toBe(true);
   });
 
   it('createPatientSchema acepta el placeholder estático', () => {

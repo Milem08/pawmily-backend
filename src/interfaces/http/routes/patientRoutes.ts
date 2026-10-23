@@ -16,6 +16,7 @@ import {
   updatePatientSchema,
   updateReminderSchema,
   barcodeEmailSchema,
+  parseOptionalSearch,
 } from '../dto/schemas';
 import { linkRequestRateLimiter } from '../middleware/rateLimit';
 import { resolvePatientPhotoUrl } from '../../../application/media/MediaUseCases';
@@ -234,7 +235,7 @@ export function patientRoutes(container: Container): Router {
     try {
       const page = parsePage(req.query.page);
       const limit = parseLimit(req.query.limit, 20);
-      const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+      const search = parseOptionalSearch(req.query.search);
       const result = await container.listPatients.execute(req.user!, { search, page, limit });
       res.json({
         data: await toClientPatientList(
