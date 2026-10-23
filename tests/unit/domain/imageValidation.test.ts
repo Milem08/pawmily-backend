@@ -71,6 +71,31 @@ describe('validatePhotoValue', () => {
     expect(validatePhotoValue('asset:abc')).toEqual({ ok: true });
   });
 
+  it('acepta el placeholder estático de la web sin descargarlo ni convertirlo', () => {
+    const placeholders = [
+      '../assets/placeholder-pet.svg',
+      'assets/placeholder-pet.svg',
+      '/assets/placeholder-pet.svg',
+    ];
+    for (const value of placeholders) {
+      expect(validatePhotoValue(value)).toEqual({ ok: true });
+    }
+  });
+
+  it('rechaza assets con .. extra, barras de más o esquema', () => {
+    const rejected = [
+      '../../assets/placeholder-pet.svg',
+      '../assets/../placeholder-pet.svg',
+      'assets/../placeholder-pet.svg',
+      'assets/placeholder-pet.svg/extra',
+      './assets/placeholder-pet.svg',
+      'javascript:../assets/placeholder-pet.svg',
+    ];
+    for (const value of rejected) {
+      expect(validatePhotoValue(value)).toEqual({ ok: false, message: INVALID });
+    }
+  });
+
   it('acepta data URL de JPG, PNG y WebP cuyo contenido coincide', () => {
     expect(validatePhotoValue(dataUrl('image/jpeg', imageBuffer('jpeg')))).toEqual({ ok: true });
     expect(validatePhotoValue(dataUrl('image/png', imageBuffer('png')))).toEqual({ ok: true });
@@ -134,7 +159,18 @@ describe('schemas de foto', () => {
     expect(parse('').success).toBe(true);
   });
 
-  it.each(cases)('$name rechaza javascript, exe renombrado y foto de más de 1.5 MB', ({ parse }) => {
+  it('createPatientSchema acepta el placeholder estático', () => {
+    for (const photo of [
+      '../assets/placeholder-pet.svg',
+      'assets/placeholder-pet.svg',
+      '/assets/placeholder-pet.svg',
+    ]) {
+      expect(createPatientSchema.safeParse({ ...patientBase, photo }).success).toBe(true);
+    }
+  });
+
+  it('createPatientSchema rechaza javascript, exe renombrado y foto de más de 1.5 MB', () => {
+    const parse = (photo?: string) => createPatientSchema.safeParse({ ...patientBase, photo });
     const script = parse('javascript:alert(1)');
     const renamed = parse(exeAsJpeg);
     const huge = parse(dataUrl('image/png', imageBuffer('png', MAX_PHOTO_BYTES + 1)));
@@ -145,6 +181,15 @@ describe('schemas de foto', () => {
     if (!script.success) expect(photoIssue(script.error.issues)).toBe(INVALID);
     if (!renamed.success) expect(photoIssue(renamed.error.issues)).toBe(INVALID);
     if (!huge.success) expect(photoIssue(huge.error.issues)).toBe(TOO_LARGE);
+  });
+
+  it('los schemas de update dejan pasar un gif o svg antiguo', () => {
+    const gif = dataUrl('image/gif', Buffer.from('GIF89a'));
+    const svg = dataUrl('image/svg+xml', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'));
+    expect(updatePatientSchema.safeParse({ photo: gif }).success).toBe(true);
+    expect(updatePatientSchema.safeParse({ photo: svg }).success).toBe(true);
+    expect(updateProfileSchema.safeParse({ photo: gif }).success).toBe(true);
+    expect(updateProfileSchema.safeParse({ photo: svg }).success).toBe(true);
   });
 
   it('createPatientSchema responde con el formato de validación 400', () => {

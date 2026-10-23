@@ -41,21 +41,17 @@ export const loginSchema = z
     message: 'Email or phone is required',
   });
 
-export const updateProfileSchema = z
-  .object({
-    name: z.string().min(1).optional(),
-    email: z.string().email().optional(),
-    phone: z.string().optional(),
-    clinic: z.string().optional(),
-    address: z.string().optional(),
-    license: z.string().optional(),
-    photo: z.string().optional(),
-    password: z.string().min(6).optional(),
-    currentPassword: z.string().min(1).optional(),
-  })
-  .superRefine((data, ctx) => {
-    refinePhotoField(data.photo, ctx);
-  });
+export const updateProfileSchema = z.object({
+  name: z.string().min(1).optional(),
+  email: z.string().email().optional(),
+  phone: z.string().optional(),
+  clinic: z.string().optional(),
+  address: z.string().optional(),
+  license: z.string().optional(),
+  photo: z.string().optional(),
+  password: z.string().min(6).optional(),
+  currentPassword: z.string().min(1).optional(),
+});
 
 const feedingMealTimeSchema = z
   .string()
@@ -153,7 +149,6 @@ export const updatePatientSchema = patientCoreSchema.partial().superRefine((data
       message: 'La raza es obligatoria para esta especie',
     });
   }
-  refinePhotoField(data.photo, ctx);
 });
 
 export const linkPatientSchema = z.object({

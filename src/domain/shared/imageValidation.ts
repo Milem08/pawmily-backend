@@ -1,3 +1,5 @@
+import { DomainError } from './DomainError';
+
 /** Tamaño máximo del binario decodificado de una foto embebida: 1.5 MiB. */
 export const MAX_PHOTO_BYTES = 1_572_864;
 
@@ -54,6 +56,17 @@ function isAssetRef(value: string): boolean {
   return /^asset:[A-Za-z0-9_-]+$/.test(value);
 }
 
+/**
+ * Ruta relativa al avatar estático de la web (`../assets/…`, `/assets/…` o `assets/…`).
+ * Un solo segmento de archivo: sin `..` extra, sin esquema y sin barras adicionales.
+ * No se descarga ni se convierte a data URL; se guarda tal cual.
+ */
+const STATIC_ASSET_PHOTO_RE = /^(\.\.\/|\/)?assets\/[A-Za-z0-9._-]+$/;
+
+function isStaticAssetPath(value: string): boolean {
+  return STATIC_ASSET_PHOTO_RE.test(value);
+}
+
 /** Base64 estándar con padding. Rechaza alfabeto inválido y relleno que no decodifica igual. */
 function decodeBase64Strict(payload: string): Buffer | null {
   const compact = payload.replace(/\s+/g, '');
@@ -66,7 +79,7 @@ function decodeBase64Strict(payload: string): Buffer | null {
 }
 
 /**
- * Acepta vacío, URL http(s) o `asset:<id>`.
+ * Acepta vacío, URL http(s), `asset:<id>` o una ruta relativa a un asset estático.
  * Un data URL solo pasa si el tipo declarado es JPEG, PNG o WebP, el base64 decodifica,
  * los magic bytes coinciden con ese tipo y el binario no supera 1.5 MB.
  */
@@ -86,6 +99,9 @@ export function validatePhotoValue(value: unknown): PhotoValidationResult {
   if (trimmed.startsWith('asset:')) {
     return isAssetRef(trimmed) ? { ok: true } : { ok: false, message: PHOTO_INVALID_MESSAGE };
   }
+  if (isStaticAssetPath(trimmed)) {
+    return { ok: true };
+  }
 
   const match = DATA_IMAGE_RE.exec(trimmed);
   if (!match) return { ok: false, message: PHOTO_INVALID_MESSAGE };
@@ -99,4 +115,26 @@ export function validatePhotoValue(value: unknown): PhotoValidationResult {
     return { ok: false, message: PHOTO_TOO_LARGE_MESSAGE };
   }
   return { ok: true };
+}
+
+/**
+ * En un update, la foto que ya está guardada no se valida ni se reescribe.
+ * Solo un valor distinto pasa por `validatePhotoValue`. Si no pasa, responde 400.
+ */
+export function photoPayloadForUpdate<T extends { photo?: unknown }>(
+  data: T,
+  storedPhoto: string | null | undefined,
+): T {
+  if (!Object.prototype.hasOwnProperty.call(data, 'photo')) return data;
+  const incoming = data.photo;
+  if (incoming === undefined || (incoming ?? null) === (storedPhoto ?? null)) {
+    const next = { ...data };
+    delete next.photo;
+    return next;
+  }
+  const result = validatePhotoValue(incoming);
+  if (!result.ok) {
+    throw new DomainError(result.message, 400, 'VALIDATION_ERROR');
+  }
+  return data;
 }
