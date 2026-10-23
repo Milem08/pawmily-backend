@@ -12,6 +12,7 @@ export interface UpdateProfileInput {
   address?: string;
   license?: string;
   photo?: string;
+  photoUrl?: string;
   password?: string;
   currentPassword?: string;
 }

@@ -1,5 +1,8 @@
 import { DomainError } from '../../domain/shared/DomainError';
-import { photoPayloadForUpdate } from '../../domain/shared/imageValidation';
+import {
+  photoPayloadForUpdate,
+  rejectExternalPhotoOnCreate,
+} from '../../domain/shared/imageValidation';
 import { calculateDiet, DIET_LIMIT_MESSAGES } from '../../domain/patients/DietCalculator';
 import { generateSecurePatientCode, Patient } from '../../domain/patients/Patient';
 import {
@@ -70,11 +73,13 @@ export class CreatePatient {
       ownerPhone?: string;
       ownerEmail?: string;
       photo?: string;
+      photoUrl?: string;
       feeding?: UpsertFeedingData;
       firstConsultation?: CreateMedicalRecordData & { type?: string };
     },
   ) {
     assertVet(actor);
+    rejectExternalPhotoOnCreate(data.photo, data.photoUrl);
     let code = generateSecurePatientCode();
     for (let attempt = 0; attempt < 8; attempt++) {
       if (!(await this.patients.codeExists(code))) break;
@@ -83,7 +88,12 @@ export class CreatePatient {
     if (await this.patients.codeExists(code)) {
       throw new DomainError('No se pudo generar un código único', 500);
     }
-    const { feeding: _feeding, firstConsultation: _firstConsultation, ...patientData } = data;
+    const {
+      feeding: _feeding,
+      firstConsultation: _firstConsultation,
+      photoUrl: _photoUrl,
+      ...patientData
+    } = data;
     const patient = await this.patients.create({
       ...patientData,
       breed: (patientData.breed ?? '').trim(),

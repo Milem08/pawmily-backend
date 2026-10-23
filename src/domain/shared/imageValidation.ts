@@ -5,6 +5,8 @@ export const MAX_PHOTO_BYTES = 1_572_864;
 
 export const PHOTO_INVALID_MESSAGE = 'La foto debe ser una imagen JPG, PNG o WebP.';
 export const PHOTO_TOO_LARGE_MESSAGE = 'La foto supera 1.5 MB; usa una imagen más pequeña.';
+export const PHOTO_EXTERNAL_URL_MESSAGE =
+  'No se puede usar una URL http(s) como foto. Envía una imagen JPG, PNG o WebP, o el avatar de la aplicación.';
 
 export type ImageType = 'jpeg' | 'png' | 'webp';
 
@@ -52,6 +54,29 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+/** URL http(s) firmada o de otro host. No es una foto que se pueda guardar. */
+export function isExternalHttpPhoto(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  return /^https?:\/\//i.test(trimmed) && isHttpUrl(trimmed);
+}
+
+/**
+ * Crear paciente o usuario con una URL http(s) en photo/photoUrl responde 400.
+ * No sustituye la validación de data URL, asset: ni avatar estático.
+ */
+export function rejectExternalPhotoOnCreate(photo: unknown, photoUrl?: unknown): void {
+  if (isExternalHttpPhoto(photo) || isExternalHttpPhoto(photoUrl)) {
+    throw new DomainError(PHOTO_EXTERNAL_URL_MESSAGE, 400, 'VALIDATION_ERROR');
+  }
+  if (typeof photoUrl === 'string' && /^https?:\/\//i.test(photoUrl.trim())) {
+    throw new DomainError(PHOTO_EXTERNAL_URL_MESSAGE, 400, 'VALIDATION_ERROR');
+  }
+  if (typeof photo === 'string' && /^https?:\/\//i.test(photo.trim()) && !isExternalHttpPhoto(photo)) {
+    throw new DomainError(PHOTO_EXTERNAL_URL_MESSAGE, 400, 'VALIDATION_ERROR');
+  }
+}
+
 function isAssetRef(value: string): boolean {
   return /^asset:[A-Za-z0-9_-]+$/.test(value);
 }
@@ -79,7 +104,8 @@ function decodeBase64Strict(payload: string): Buffer | null {
 }
 
 /**
- * Acepta vacío, URL http(s), `asset:<id>` o una ruta relativa a un asset estático.
+ * Acepta vacío, `asset:<id>` o una ruta relativa a un asset estático.
+ * Una URL http(s) (firmada o de otro host) no se acepta al validar una foto nueva.
  * Un data URL solo pasa si el tipo declarado es JPEG, PNG o WebP, el base64 decodifica,
  * los magic bytes coinciden con ese tipo y el binario no supera 1.5 MB.
  */
@@ -94,7 +120,7 @@ export function validatePhotoValue(value: unknown): PhotoValidationResult {
   const trimmed = value.trim();
   if (trimmed === '') return { ok: true };
   if (/^https?:\/\//i.test(trimmed)) {
-    return isHttpUrl(trimmed) ? { ok: true } : { ok: false, message: PHOTO_INVALID_MESSAGE };
+    return { ok: false, message: PHOTO_EXTERNAL_URL_MESSAGE };
   }
   if (trimmed.startsWith('asset:')) {
     return isAssetRef(trimmed) ? { ok: true } : { ok: false, message: PHOTO_INVALID_MESSAGE };
@@ -118,23 +144,36 @@ export function validatePhotoValue(value: unknown): PhotoValidationResult {
 }
 
 /**
- * En un update, la foto que ya está guardada no se valida ni se reescribe.
- * Solo un valor distinto pasa por `validatePhotoValue`. Si no pasa, responde 400.
+ * En un update, no se reescribe la foto guardada si llega la misma referencia
+ * o una URL http(s) (la web reenvía la URL firmada de Supabase u otro host).
+ * `photoUrl` nunca se persiste. Solo un valor distinto y no http pasa por `validatePhotoValue`.
  */
-export function photoPayloadForUpdate<T extends { photo?: unknown }>(
+export function photoPayloadForUpdate<T extends { photo?: unknown; photoUrl?: unknown }>(
   data: T,
   storedPhoto: string | null | undefined,
 ): T {
-  if (!Object.prototype.hasOwnProperty.call(data, 'photo')) return data;
-  const incoming = data.photo;
-  if (incoming === undefined || (incoming ?? null) === (storedPhoto ?? null)) {
-    const next = { ...data };
+  const hasPhoto = Object.prototype.hasOwnProperty.call(data, 'photo');
+  const hasPhotoUrl = Object.prototype.hasOwnProperty.call(data, 'photoUrl');
+  if (!hasPhoto && !hasPhotoUrl) return data;
+
+  const next = { ...data };
+  if (hasPhotoUrl) delete next.photoUrl;
+  if (!hasPhoto) return next;
+
+  const incoming = next.photo;
+  const sameAsStored = (incoming ?? null) === (storedPhoto ?? null);
+  if (incoming === undefined || sameAsStored || isExternalHttpPhoto(incoming)) {
     delete next.photo;
     return next;
   }
+  if (typeof incoming === 'string' && /^https?:\/\//i.test(incoming.trim())) {
+    delete next.photo;
+    return next;
+  }
+
   const result = validatePhotoValue(incoming);
   if (!result.ok) {
     throw new DomainError(result.message, 400, 'VALIDATION_ERROR');
   }
-  return data;
+  return next;
 }

@@ -1,10 +1,11 @@
 import { DomainError } from '../../../src/domain/shared/DomainError';
+import { PHOTO_EXTERNAL_URL_MESSAGE } from '../../../src/domain/shared/imageValidation';
 import { User } from '../../../src/domain/identity/User';
 import { UserRepository } from '../../../src/domain/identity/UserRepository';
 import { Patient } from '../../../src/domain/patients/Patient';
 import { PatientRepository } from '../../../src/domain/patients/PatientRepository';
 import { PatientAccessRepository } from '../../../src/domain/access/PatientAccessRepository';
-import { UpdatePatient } from '../../../src/application/patients/PatientUseCases';
+import { UpdatePatient, CreatePatient } from '../../../src/application/patients/PatientUseCases';
 import { UpdateProfile } from '../../../src/application/identity/UpdateProfile';
 import { BcryptHasher } from '../../../src/infrastructure/auth/BcryptHasher';
 import { RefreshTokenStore } from '../../../src/infrastructure/auth/RefreshTokenStore';
@@ -20,6 +21,9 @@ const OLD_SVG = dataUrl(
   'image/svg+xml',
   Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'),
 );
+const SIGNED =
+  'https://abc.supabase.co/storage/v1/object/sign/pet-photos/luna.jpg?token=eyJhbGciOiJIUzI1NiJ9.firma';
+const EXTERNAL = 'http://cdn.example.com/ana.png?token=abc';
 
 function makePatient(photo: string | null): Patient {
   return new Patient({
@@ -112,5 +116,51 @@ describe('update de foto ya guardada', () => {
     const { uc, update } = patientUseCase(makePatient(null));
     await uc.execute(vet, 'p1', { photo: '../assets/placeholder-pet.svg' });
     expect(update).toHaveBeenCalledWith('p1', { photo: '../assets/placeholder-pet.svg' });
+  });
+
+  it('ignora la URL firmada al editar la mascota y conserva la referencia guardada', async () => {
+    const stored = 'asset:foto-luna';
+    const { uc, update } = patientUseCase(makePatient(stored));
+    await uc.execute(vet, 'p1', { name: 'Luna', photo: SIGNED, photoUrl: SIGNED });
+    expect(update).toHaveBeenCalledWith('p1', { name: 'Luna' });
+  });
+
+  it('ignora una URL externa distinta al editar el perfil', async () => {
+    const stored = 'asset:foto-ana';
+    const { uc, update } = profileUseCase(makeUser(stored));
+    await uc.execute('u1', { name: 'Ana López', photo: EXTERNAL, photoUrl: EXTERNAL });
+    expect(update).toHaveBeenCalledWith('u1', { name: 'Ana López' });
+  });
+
+  it('no reescribe si reenvía la misma URL que ya estaba guardada', async () => {
+    const { uc, update } = patientUseCase(makePatient(SIGNED));
+    await uc.execute(vet, 'p1', { photo: SIGNED, photoUrl: SIGNED });
+    expect(update).toHaveBeenCalledWith('p1', {});
+  });
+
+  it('rechaza crear una mascota con URL firmada o externa', async () => {
+    const create = jest.fn();
+    const patients = {
+      codeExists: jest.fn(),
+      create,
+    } as unknown as PatientRepository;
+    const uc = new CreatePatient(patients, { log: jest.fn() } as never);
+    const body = {
+      name: 'Luna',
+      species: 'Pez',
+      age: '1',
+      sex: 'hembra',
+      ownerName: 'Ana',
+    };
+    await expect(uc.execute(vet, { ...body, photo: SIGNED })).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'VALIDATION_ERROR',
+      message: PHOTO_EXTERNAL_URL_MESSAGE,
+    } satisfies Partial<DomainError>);
+    await expect(uc.execute(vet, { ...body, photoUrl: EXTERNAL })).rejects.toMatchObject({
+      statusCode: 400,
+      message: PHOTO_EXTERNAL_URL_MESSAGE,
+    });
+    expect(create).not.toHaveBeenCalled();
   });
 });

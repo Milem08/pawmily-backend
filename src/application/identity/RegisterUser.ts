@@ -1,4 +1,5 @@
 import { DomainError } from '../../domain/shared/DomainError';
+import { rejectExternalPhotoOnCreate } from '../../domain/shared/imageValidation';
 import { Role, isRole } from '../../domain/identity/Role';
 import { UserRepository } from '../../domain/identity/UserRepository';
 import { BcryptHasher } from '../../infrastructure/auth/BcryptHasher';
@@ -16,6 +17,7 @@ export interface RegisterUserInput {
   address?: string;
   license?: string;
   photo?: string;
+  photoUrl?: string;
 }
 
 export class RegisterUser {
@@ -28,6 +30,7 @@ export class RegisterUser {
   ) {}
 
   async execute(input: RegisterUserInput, meta?: { userAgent?: string; ip?: string }) {
+    rejectExternalPhotoOnCreate(input.photo, input.photoUrl);
     const email = (input.email || (input.phone ? `${input.phone}@pawmily.phone` : ''))
       .trim()
       .toLowerCase();
